@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.exc import StaleDataError
 from sqlalchemy import select
-from app.core.database import get_db
+from app.core.database import get_db, set_tenant_context
 from app.core.security import get_current_user, AuthenticatedUser
 from app.models.item import Item
 from app.api.v1.schemas import ItemCreate, ItemUpdate, ItemResponse
@@ -15,6 +15,7 @@ async def create_item(
     current_user: AuthenticatedUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
+    await set_tenant_context(db, current_user.tenant_id)
     item = Item(
         tenant_id=current_user.tenant_id,
         title=payload.title,
@@ -30,6 +31,7 @@ async def list_items(
     current_user: AuthenticatedUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
+    await set_tenant_context(db, current_user.tenant_id)
     query = select(Item).where(Item.tenant_id == current_user.tenant_id).order_by(Item.created_at.desc())
     result = await db.execute(query)
     return result.scalars().all()
@@ -40,6 +42,7 @@ async def get_item(
     current_user: AuthenticatedUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
+    await set_tenant_context(db, current_user.tenant_id)
     query = select(Item).where(Item.id == item_id, Item.tenant_id == current_user.tenant_id)
     result = await db.execute(query)
     item = result.scalar_one_or_none()
@@ -54,6 +57,7 @@ async def update_item(
     current_user: AuthenticatedUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
+    await set_tenant_context(db, current_user.tenant_id)
     query = select(Item).where(Item.id == item_id, Item.tenant_id == current_user.tenant_id)
     result = await db.execute(query)
     item = result.scalar_one_or_none()
@@ -90,6 +94,7 @@ async def delete_item(
     current_user: AuthenticatedUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
+    await set_tenant_context(db, current_user.tenant_id)
     query = select(Item).where(Item.id == item_id, Item.tenant_id == current_user.tenant_id)
     result = await db.execute(query)
     item = result.scalar_one_or_none()

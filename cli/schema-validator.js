@@ -46,14 +46,36 @@ class SchemaValidator {
     }
 
     const errors = [];
-    this._validateNode(data, schema, '', errors);
+    this._validateNode(data, schema, '', errors, schema);
     return {
       valid: errors.length === 0,
       errors
     };
   }
 
-  _validateNode(data, schema, currentPath, errors) {
+  _validateNode(data, schema, currentPath, errors, rootSchema = null) {
+    if (!schema) return;
+    const root = rootSchema || schema;
+
+    // $ref resolution (internal "#/$defs/..." or "#/definitions/..." or schema title)
+    if (schema.$ref) {
+      const refTarget = this._resolveRef(schema.$ref, root);
+      if (refTarget) {
+        return this._validateNode(data, refTarget, currentPath, errors, root);
+      } else {
+        errors.push(`At '${currentPath || 'root'}': could not resolve $ref '${schema.$ref}'`);
+        return;
+      }
+    }
+
+    // const check
+    if (schema.const !== undefined) {
+      if (data !== schema.const) {
+        errors.push(`At '${currentPath || 'root'}': expected const value '${schema.const}', got '${data}'`);
+      }
+    }
+
+    // Type check
     if (schema.type) {
       const actualType = this._getType(data);
       if (Array.isArray(schema.type)) {
@@ -64,6 +86,42 @@ class SchemaValidator {
       } else if (actualType !== schema.type) {
         errors.push(`At '${currentPath || 'root'}': expected type '${schema.type}', got '${actualType}'`);
         return;
+      }
+    }
+
+    // oneOf validation: exactly one sub-schema must match
+    if (Array.isArray(schema.oneOf)) {
+      let matches = 0;
+      for (const sub of schema.oneOf) {
+        const subErrors = [];
+        this._validateNode(data, sub, currentPath, subErrors, root);
+        if (subErrors.length === 0) matches++;
+      }
+      if (matches !== 1) {
+        errors.push(`At '${currentPath || 'root'}': oneOf validation failed. Matched ${matches} schemas (expected exactly 1).`);
+      }
+    }
+
+    // anyOf validation: at least one sub-schema must match
+    if (Array.isArray(schema.anyOf)) {
+      let matched = false;
+      for (const sub of schema.anyOf) {
+        const subErrors = [];
+        this._validateNode(data, sub, currentPath, subErrors, root);
+        if (subErrors.length === 0) {
+          matched = true;
+          break;
+        }
+      }
+      if (!matched) {
+        errors.push(`At '${currentPath || 'root'}': anyOf validation failed. No sub-schemas matched.`);
+      }
+    }
+
+    // allOf validation: all sub-schemas must match
+    if (Array.isArray(schema.allOf)) {
+      for (const sub of schema.allOf) {
+        this._validateNode(data, sub, currentPath, errors, root);
       }
     }
 
@@ -89,6 +147,26 @@ class SchemaValidator {
       }
     }
 
+    // Format check (RFC 3339 / ISO 8601 date-time, uuid, email, uri)
+    if (schema.format && typeof data === 'string') {
+      if (schema.format === 'date-time') {
+        const isoRegex = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/;
+        if (!isoRegex.test(data) || isNaN(Date.parse(data))) {
+          errors.push(`At '${currentPath || 'root'}': string '${data}' is not a valid ISO 8601 date-time.`);
+        }
+      } else if (schema.format === 'uuid') {
+        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+        if (!uuidRegex.test(data)) {
+          errors.push(`At '${currentPath || 'root'}': string '${data}' is not a valid UUID.`);
+        }
+      } else if (schema.format === 'email') {
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(data)) {
+          errors.push(`At '${currentPath || 'root'}': string '${data}' is not a valid email.`);
+        }
+      }
+    }
+
     // Numeric range
     if (typeof data === 'number') {
       if (schema.minimum !== undefined && data < schema.minimum) {
@@ -103,7 +181,7 @@ class SchemaValidator {
     if (schema.properties && typeof data === 'object' && data !== null && !Array.isArray(data)) {
       for (const [propName, propSchema] of Object.entries(schema.properties)) {
         if (data[propName] !== undefined) {
-          this._validateNode(data[propName], propSchema, currentPath ? `${currentPath}.${propName}` : propName, errors);
+          this._validateNode(data[propName], propSchema, currentPath ? `${currentPath}.${propName}` : propName, errors, root);
         }
       }
 
@@ -121,9 +199,25 @@ class SchemaValidator {
     // Array items validation
     if (schema.items && Array.isArray(data)) {
       data.forEach((item, idx) => {
-        this._validateNode(item, schema.items, `${currentPath}[${idx}]`, errors);
+        this._validateNode(item, schema.items, `${currentPath}[${idx}]`, errors, root);
       });
     }
+  }
+
+  _resolveRef(ref, rootSchema) {
+    if (ref.startsWith('#/')) {
+      const parts = ref.slice(2).split('/');
+      let curr = rootSchema;
+      for (const p of parts) {
+        if (curr && curr[p] !== undefined) {
+          curr = curr[p];
+        } else {
+          return null;
+        }
+      }
+      return curr;
+    }
+    return this.getSchema(ref);
   }
 
   _getType(val) {

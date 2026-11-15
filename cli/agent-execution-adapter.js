@@ -70,10 +70,10 @@ class AgentExecutionAdapter {
       throw err;
     }
 
-    // Anti-Hallucination Law 5: Full output completeness check
+    // Anti-Hallucination Law 5: Full output completeness check (strictly blocking)
     const completenessCheck = AntiHallucinationEnforcer.verifyOutputCompleteness(agentResponse.content);
     if (!completenessCheck.valid) {
-      console.warn(`[AntiHallucination] ${completenessCheck.reason}`);
+      throw new Error(`[AntiHallucination BLOCKED] Output completeness check failed: ${completenessCheck.reason}`);
     }
 
     // 4. Safely collect generated artifacts with root containment & SHA-256 hashing
@@ -97,13 +97,13 @@ class AgentExecutionAdapter {
       const testCommand = context.testCommand || 'npm test';
       verificationResult = await this.runFeedbackLoop(testCommand, stage, collectedFiles, agentResponse);
 
-      // Anti-Hallucination Law 2: Verification invariant audit
+      // Anti-Hallucination Law 2: Verification invariant audit (strictly blocking)
       const invariantAudit = AntiHallucinationEnforcer.auditVerificationInvariant(
         agentResponse.content,
         { exitCode: verificationResult.exitCode !== undefined ? verificationResult.exitCode : (verificationResult.passed ? 0 : 1) }
       );
       if (!invariantAudit.valid) {
-        console.warn(`[AntiHallucination] ${invariantAudit.reason}`);
+        throw new Error(`[AntiHallucination BLOCKED] Verification invariant audit failed: ${invariantAudit.reason}`);
       }
     }
 
@@ -148,7 +148,8 @@ class AgentExecutionAdapter {
    * Builds the token-budgeted prompt for the specialist agent persona
    */
   buildSpecialistPrompt(stage, context = {}) {
-    let prompt = `You are operating as the specialist persona: "${stage.agent}".\n`;
+    const assignedAgent = context.assignedAgent || context.agentOverride || stage.agent;
+    let prompt = `You are operating as the specialist persona: "${assignedAgent}".\n`;
     prompt += `Framework Lifecycle Stage: ${stage.name} (${stage.id})\n`;
     prompt += `Primary Required Skill: ${stage.skill}\n\n`;
 

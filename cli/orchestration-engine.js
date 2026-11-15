@@ -315,7 +315,7 @@ class OrchestrationEngine {
 
       const handoffValidation = this.schemaValidator.validate(handoffPayload, 'agent_handoff_schema.json');
       if (!handoffValidation.valid) {
-        console.warn(`[SchemaValidator] Agent handoff schema warning: ${handoffValidation.errors.join('; ')}`);
+        throw new Error(`[SchemaValidator BLOCKED] Agent handoff schema contract violation: ${handoffValidation.errors.join('; ')}`);
       }
 
       state.history.push({
@@ -582,23 +582,55 @@ class OrchestrationEngine {
     });
 
     for (const batch of batches) {
-      for (const task of batch) {
+      // Execute all independent tasks in the batch concurrently
+      const batchPromises = batch.map(async (task) => {
         const assigned = task.assignedAgent || task.agent;
         if (stage.index === 5 && (assigned === 'Senior Builder' || options.authorAgent === assigned)) {
           throw new Error(`Dual control violation: Author cannot act as verifier in Stage 05.`);
         }
 
         let result;
-        if (typeof task.execute === 'function') {
-          result = await task.execute();
-        } else {
-          result = await adapter.executeStage(targetStageIndex, {
-            ...options,
-            targetFiles: task.targetFiles,
-            taskDescription: task.description
-          });
+        let success = false;
+        let error = null;
+
+        try {
+          if (typeof task.execute === 'function') {
+            result = await task.execute();
+            success = result !== false && (!result || result.success !== false);
+          } else {
+            result = await adapter.executeStage(targetStageIndex, {
+              ...options,
+              assignedAgent: assigned,
+              agentOverride: assigned,
+              targetFiles: task.targetFiles,
+              taskDescription: task.description
+            });
+            success = Boolean(result && result.success !== false);
+          }
+        } catch (err) {
+          success = false;
+          error = err.message;
+          result = { error: err.message };
+          if (options.failFast) {
+            throw err;
+          }
         }
-        taskResults.push({ taskId: task.id, success: true, result });
+
+        return {
+          taskId: task.id,
+          assignedAgent: assigned,
+          success,
+          error,
+          result
+        };
+      });
+
+      const batchResults = await Promise.all(batchPromises);
+      taskResults.push(...batchResults);
+
+      const hasFailures = batchResults.some(r => !r.success);
+      if (hasFailures && options.failFast) {
+        throw new Error(`DAG batch execution halted: one or more tasks failed.`);
       }
     }
 

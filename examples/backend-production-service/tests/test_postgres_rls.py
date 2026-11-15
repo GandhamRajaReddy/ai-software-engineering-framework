@@ -2,13 +2,12 @@ import os
 import pytest
 from sqlalchemy import text
 from app.models.base import generate_uuidv7
-from app.models.tenant import Tenant
-from app.models.item import Item
+from app.core.security import create_access_token
 
 @pytest.mark.asyncio
 async def test_postgresql_row_level_security_enforcement(db_session):
     """
-    Validates PostgreSQL Row-Level Security (RLS) as an immutable defense-in-depth boundary.
+    Validates PostgreSQL Row-Level Security (RLS) as an immutable database-level boundary.
     When RLS is active:
     1. Even unconstrained 'SELECT * FROM items' queries only return rows matching 'app.current_tenant_id'.
     2. Writes with mismatched tenant IDs are rejected at the database engine level (RLS check violation).
@@ -17,7 +16,7 @@ async def test_postgresql_row_level_security_enforcement(db_session):
     dialect_name = bind.dialect.name if bind else "unknown"
 
     if dialect_name != "postgresql":
-        pytest.skip(f"RLS integration test requires PostgreSQL engine (detected dialect: {dialect_name})")
+        pytest.skip(f"RLS engine test requires PostgreSQL (detected dialect: {dialect_name})")
 
     tenant_a_id = f"tenant-a-{generate_uuidv7()[:8]}"
     tenant_b_id = f"tenant-b-{generate_uuidv7()[:8]}"
@@ -32,7 +31,7 @@ async def test_postgresql_row_level_security_enforcement(db_session):
     )
 
     # Insert Item for Tenant A while setting session tenant context
-    await db_session.execute(text(f"SET LOCAL app.current_tenant_id = '{tenant_a_id}';"))
+    await db_session.execute(text(f"SELECT set_config('app.current_tenant_id', '{tenant_a_id}', true);"))
     item_a_id = generate_uuidv7()
     await db_session.execute(
         text("INSERT INTO items (id, tenant_id, title, description, version, created_at, updated_at) VALUES (:id, :tid, 'Confidential A', 'Desc', 1, NOW(), NOW())"),
@@ -40,7 +39,7 @@ async def test_postgresql_row_level_security_enforcement(db_session):
     )
 
     # Switch session context to Tenant B
-    await db_session.execute(text(f"SET LOCAL app.current_tenant_id = '{tenant_b_id}';"))
+    await db_session.execute(text(f"SELECT set_config('app.current_tenant_id', '{tenant_b_id}', true);"))
     
     # 1. Verify unconstrained SELECT returns 0 items for Tenant B
     result = await db_session.execute(text("SELECT id, title FROM items;"))
@@ -54,3 +53,37 @@ async def test_postgresql_row_level_security_enforcement(db_session):
             {"id": generate_uuidv7(), "tid": tenant_a_id}
         )
     assert "row-level security policy" in str(exc_info.value).lower()
+
+@pytest.mark.asyncio
+async def test_api_requests_with_postgresql_rls_context(client, setup_tenants, db_session):
+    """
+    Validates that authenticated API requests properly set transaction-local RLS tenant context.
+    Tests end-to-end API path with real PostgreSQL RLS.
+    """
+    bind = db_session.bind
+    dialect_name = bind.dialect.name if bind else "unknown"
+    if dialect_name != "postgresql":
+        pytest.skip(f"API RLS test requires PostgreSQL (detected dialect: {dialect_name})")
+
+    token_a = setup_tenants["token_a"]
+    token_b = setup_tenants["token_b"]
+    headers_a = {"Authorization": f"Bearer {token_a}"}
+    headers_b = {"Authorization": f"Bearer {token_b}"}
+
+    # 1. Tenant A creates item via API
+    res = await client.post(
+        "/api/v1/items",
+        json={"title": "RLS Shielded Item", "description": "Guaranteed isolated"},
+        headers=headers_a
+    )
+    assert res.status_code == 201
+    item_id = res.json()["id"]
+
+    # 2. Tenant B cannot see item via API
+    res_b = await client.get(f"/api/v1/items/{item_id}", headers=headers_b)
+    assert res_b.status_code == 404
+
+    # 3. Direct unconstrained SQL query under Tenant B's RLS session context returns 0 rows
+    await db_session.execute(text(f"SELECT set_config('app.current_tenant_id', 'tenant-b-222', true);"))
+    leak_check = await db_session.execute(text(f"SELECT * FROM items WHERE id = '{item_id}';"))
+    assert leak_check.fetchone() is None

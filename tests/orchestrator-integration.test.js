@@ -283,3 +283,87 @@ test('Orchestration Engine: Task DAG Execution with file locks and dual control 
     /Dual control violation/
   );
 });
+
+test('Cryptographic Signer: Trusted key verification & content tampering detection', () => {
+  const rootKeyPair = ManifestSigner.generateKeyPair();
+  const untrustedKeyPair = ManifestSigner.generateKeyPair();
+  const treeHash = 'c'.repeat(64);
+
+  const manifestBody = '# Release Manifest\n\nVersion: 1.0.0\nStatus: APPROVED\nRollback: kubectl rollout undo';
+  
+  // Sign with trusted key
+  const signed = ManifestSigner.signPayload({
+    gitCommit: 'head123',
+    sourceTreeHash: treeHash,
+    releaseVersion: '1.0.0',
+    evidenceRecordIds: ['EV-1']
+  }, rootKeyPair.privateKey, manifestBody);
+
+  const block = ManifestSigner.formatSignatureBlock(signed, rootKeyPair.publicKey);
+  const fullSignedManifest = manifestBody + block;
+
+  // 1. Valid signature with trusted key passes
+  const valid = ManifestSigner.verifyManifest(fullSignedManifest, treeHash, {
+    trustedKeys: [rootKeyPair.publicKey.replace(/-----[A-Z ]+-----/g, '').replace(/\r?\n/g, '').trim()]
+  });
+  assert.strictEqual(valid.valid, true);
+
+  // 2. Reject untrusted key even if signature is valid math
+  const untrustedResult = ManifestSigner.verifyManifest(fullSignedManifest, treeHash, {
+    trustedKeys: ['AnUntrustedKeyThatIsNotInTheKeyring1234567890123456=']
+  });
+  assert.strictEqual(untrustedResult.valid, false);
+  assert.match(untrustedResult.reason, /Untrusted signer identity/i);
+
+  // 3. Reject modified body (content tampering)
+  const tamperedBodyManifest = fullSignedManifest.replace('Status: APPROVED', 'Status: REJECTED');
+  const tamperedContentResult = ManifestSigner.verifyManifest(tamperedBodyManifest, treeHash);
+  assert.strictEqual(tamperedContentResult.valid, false);
+  assert.match(tamperedContentResult.reason, /content tampering detected/i);
+});
+
+test('Schema Validator: Advanced keywords ($ref, const, format, oneOf, anyOf, allOf)', () => {
+  const validator = new SchemaValidator();
+
+  const testSchema = {
+    type: 'object',
+    required: ['id', 'status', 'email', 'choice'],
+    properties: {
+      id: { type: 'string', format: 'uuid' },
+      status: { const: 'ACTIVE' },
+      email: { type: 'string', format: 'email' },
+      choice: {
+        oneOf: [
+          { type: 'string', enum: ['OPTION_A', 'OPTION_B'] },
+          { type: 'number', minimum: 1, maximum: 10 }
+        ]
+      }
+    }
+  };
+
+  // Valid object
+  const validObj = {
+    id: '123e4567-e89b-12d3-a456-426614174000',
+    status: 'ACTIVE',
+    email: 'user@example.com',
+    choice: 'OPTION_A'
+  };
+  const resValid = validator.validate(validObj, testSchema);
+  assert.strictEqual(resValid.valid, true);
+
+  // Invalid const
+  const badConst = { ...validObj, status: 'INACTIVE' };
+  assert.strictEqual(validator.validate(badConst, testSchema).valid, false);
+
+  // Invalid uuid format
+  const badUuid = { ...validObj, id: 'not-a-uuid' };
+  assert.strictEqual(validator.validate(badUuid, testSchema).valid, false);
+
+  // Invalid email format
+  const badEmail = { ...validObj, email: 'invalid-email' };
+  assert.strictEqual(validator.validate(badEmail, testSchema).valid, false);
+
+  // Invalid oneOf (matches neither)
+  const badOneOf = { ...validObj, choice: 'OPTION_C' };
+  assert.strictEqual(validator.validate(badOneOf, testSchema).valid, false);
+});

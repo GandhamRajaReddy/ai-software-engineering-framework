@@ -19,20 +19,40 @@ class ProviderExecutionManager {
   }
 
   /**
-   * Dispatches task to provider with full fallback tracking
+   * Dispatches task to provider with full fallback tracking, health verification, and rate limiting
    */
   async execute(prompt, stage, options = {}) {
     const fallbackChain = [];
     const targetBackend = options.backend || this.requestedBackend;
+    const requiredCapabilities = options.requiredCapabilities || [];
 
     // 1. Primary Attempt
-    let result = { success: false, error: 'Provider in cooldown or rate-limited' };
-    if (this.providerManager.isProviderAvailable(targetBackend)) {
-      result = await this.tryBackend(targetBackend, prompt, stage, options);
-      if (result.success) {
-        this.providerManager.recordSuccess(targetBackend);
-      } else if (result.error && (result.error.includes('429') || result.error.includes('rate limit'))) {
-        this.providerManager.recordRateLimit(targetBackend);
+    let result = { success: false, error: 'Provider unavailable, unhealthy, or rate-limited' };
+    
+    // Check capability validation if capabilities required
+    const providerMeta = { id: targetBackend, capabilities: ['code_generation', 'reasoning', 'file_editing'] };
+    const hasCapabilities = this.providerManager.validateCapabilities(providerMeta, requiredCapabilities);
+    
+    // Rate limit bucket check
+    const bucket = this.providerManager.getTokenBucket(targetBackend);
+    const hasTokens = bucket.tryConsume(1);
+
+    if (!hasCapabilities) {
+      result.error = `Provider ${targetBackend} lacks required capabilities: ${requiredCapabilities.join(', ')}`;
+    } else if (!hasTokens) {
+      result.error = `Provider ${targetBackend} token bucket exhausted (rate limit exceeded)`;
+      this.providerManager.recordRateLimit(targetBackend);
+    } else if (this.providerManager.isProviderAvailable(targetBackend)) {
+      const health = await this.providerManager.checkProviderHealth(targetBackend);
+      if (!health.healthy) {
+        result.error = `Provider ${targetBackend} health check failed: ${health.reason || 'unhealthy'}`;
+      } else {
+        result = await this.tryBackend(targetBackend, prompt, stage, options);
+        if (result.success) {
+          this.providerManager.recordSuccess(targetBackend);
+        } else if (result.error && (result.error.includes('429') || result.error.includes('rate limit'))) {
+          this.providerManager.recordRateLimit(targetBackend);
+        }
       }
     }
 
@@ -53,30 +73,40 @@ class ProviderExecutionManager {
       };
     }
 
-    // 2. Fallback to Direct LLM if Claude Code or Codex was requested
-    if ((targetBackend === 'claude-code' || targetBackend === 'codex') && this.providerManager.isProviderAvailable('direct-llm')) {
-      const fallbackResult = await this.tryBackend('direct-llm', prompt, stage, options);
-      if (fallbackResult.success) {
-        this.providerManager.recordSuccess('direct-llm');
-      } else if (fallbackResult.error && (fallbackResult.error.includes('429') || fallbackResult.error.includes('rate limit'))) {
-        this.providerManager.recordRateLimit('direct-llm');
-      }
+    // 2. Select next healthy fallback provider
+    const candidateFallbacks = [
+      { id: 'direct-llm', capabilities: ['code_generation', 'reasoning', 'file_editing'] },
+      { id: 'mock', capabilities: ['code_generation', 'reasoning', 'file_editing'] }
+    ].filter(p => p.id !== targetBackend);
 
-      fallbackChain.push({
-        backend: 'direct-llm',
-        success: fallbackResult.success,
-        error: fallbackResult.error || null,
-        timestamp: new Date().toISOString()
-      });
+    const nextHealthy = await this.providerManager.selectHealthyProvider(candidateFallbacks, requiredCapabilities);
 
-      if (fallbackResult.success) {
-        return {
-          content: fallbackResult.content,
-          requestedBackend: targetBackend,
-          actualBackend: 'direct-llm',
-          isMock: false,
-          fallbackChain
-        };
+    if (nextHealthy && nextHealthy.id === 'direct-llm') {
+      const fbBucket = this.providerManager.getTokenBucket('direct-llm');
+      if (fbBucket.tryConsume(1)) {
+        const fallbackResult = await this.tryBackend('direct-llm', prompt, stage, options);
+        if (fallbackResult.success) {
+          this.providerManager.recordSuccess('direct-llm');
+        } else if (fallbackResult.error && (fallbackResult.error.includes('429') || fallbackResult.error.includes('rate limit'))) {
+          this.providerManager.recordRateLimit('direct-llm');
+        }
+
+        fallbackChain.push({
+          backend: 'direct-llm',
+          success: fallbackResult.success,
+          error: fallbackResult.error || null,
+          timestamp: new Date().toISOString()
+        });
+
+        if (fallbackResult.success) {
+          return {
+            content: fallbackResult.content,
+            requestedBackend: targetBackend,
+            actualBackend: 'direct-llm',
+            isMock: false,
+            fallbackChain
+          };
+        }
       }
     }
 

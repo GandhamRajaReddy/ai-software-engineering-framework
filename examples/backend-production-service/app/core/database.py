@@ -1,4 +1,5 @@
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
+from sqlalchemy import text
 from app.core.config import settings
 from app.models.base import Base
 
@@ -32,3 +33,17 @@ async def get_db():
             yield session
         finally:
             await session.close()
+
+async def set_tenant_context(session: AsyncSession, tenant_id: str) -> None:
+    """
+    Sets the transaction-local PostgreSQL tenant identifier for Row-Level Security (RLS).
+    Uses set_config(..., is_local=true) so the setting is strictly scoped to the active transaction.
+    Dialect-safe: no-op on SQLite or other non-PostgreSQL engines.
+    """
+    bind = session.bind
+    dialect_name = bind.dialect.name if bind else ""
+    if dialect_name == "postgresql":
+        await session.execute(
+            text("SELECT set_config('app.current_tenant_id', :tid, true)"),
+            {"tid": tenant_id}
+        )

@@ -12,7 +12,24 @@ const path = require('path');
 
 const SIGNATURE_BLOCK_REGEX = /```asef-signature\r?\n([\s\S]*?)\r?\n```/;
 
+// Known trusted root release authority public keys
+const TRUSTED_RELEASE_KEYS = new Set([
+  'MCowBQYDK2VwAyEAAiTO/3UCMcvPG544UUOS3X6tRFIWXKuVLTiab4bxG2k='
+]);
+
 class ManifestSigner {
+  /**
+   * Registers a trusted release authority public key
+   */
+  static registerTrustedKey(publicKeyPemOrCompact) {
+    const compact = publicKeyPemOrCompact
+      .replace(/-----BEGIN PUBLIC KEY-----/, '')
+      .replace(/-----END PUBLIC KEY-----/, '')
+      .replace(/\r?\n/g, '')
+      .trim();
+    TRUSTED_RELEASE_KEYS.add(compact);
+  }
+
   /**
    * Generates a new Ed25519 keypair for an agent or release authority
    */
@@ -35,11 +52,29 @@ class ManifestSigner {
     return Buffer.from(JSON.stringify(ordered), 'utf8');
   }
 
+  static extractBody(content) {
+    if (!content) return '';
+    return content
+      .replace(/## Cryptographic Release Signature[\s\S]*$/, '')
+      .replace(/```asef-signature[\s\S]*?```/, '')
+      .trim();
+  }
+
   /**
-   * Signs a canonical release payload using an Ed25519 private key
+   * Signs a canonical release payload using an Ed25519 private key.
+   * Cryptographically binds metadata AND complete content body digest when provided.
    */
-  static signPayload(payload, privateKeyPem) {
-    const canonicalBytes = this.canonicalizePayload(payload);
+  static signPayload(payload, privateKeyPem, contentBody = null) {
+    let contentDigest = null;
+    const canonicalPayloadWithDigest = { ...payload };
+
+    if (contentBody) {
+      const bodyClean = this.extractBody(contentBody);
+      contentDigest = crypto.createHash('sha256').update(bodyClean, 'utf8').digest('hex');
+      canonicalPayloadWithDigest.contentDigest = contentDigest;
+    }
+
+    const canonicalBytes = this.canonicalizePayload(canonicalPayloadWithDigest);
     const payloadDigest = crypto.createHash('sha256').update(canonicalBytes).digest('hex');
     
     // Sign canonical bytes with Ed25519
@@ -50,7 +85,8 @@ class ManifestSigner {
       algorithm: 'Ed25519',
       signature: signatureBase64,
       payloadDigest,
-      canonicalPayload: payload
+      contentDigest,
+      canonicalPayload: canonicalPayloadWithDigest
     };
   }
 
@@ -66,6 +102,11 @@ class ManifestSigner {
       .replace(/\r?\n/g, '')
       .trim();
 
+    // Register this key as trusted during local generation
+    TRUSTED_RELEASE_KEYS.add(compactPublicKey);
+
+    const contentDigestLine = signedResult.contentDigest ? `ContentDigest: ${signedResult.contentDigest}\n` : '';
+
     return `\n## Cryptographic Release Signature\n\n` +
       `> **Notice:** This release manifest is cryptographically sealed. Any alteration of ` +
       `source files, evidence IDs, or gate scores invalidates this signature.\n\n` +
@@ -74,6 +115,7 @@ class ManifestSigner {
       `PublicKey: ${compactPublicKey}\n` +
       `Signature: ${signedResult.signature}\n` +
       `PayloadDigest: ${signedResult.payloadDigest}\n` +
+      contentDigestLine +
       `GitCommit: ${p.gitCommit || 'HEAD'}\n` +
       `SourceTreeHash: ${p.sourceTreeHash}\n` +
       `ReleaseVersion: ${p.releaseVersion || '1.0.0'}\n` +
@@ -82,9 +124,10 @@ class ManifestSigner {
   }
 
   /**
-   * Verifies the cryptographic signature embedded inside a release manifest
+   * Verifies the cryptographic signature embedded inside a release manifest,
+   * validating the signature math, signer authority, and content integrity.
    */
-  static verifyManifest(manifestContent, expectedSourceTreeHash = null) {
+  static verifyManifest(manifestContent, expectedSourceTreeHash = null, options = {}) {
     if (!manifestContent) {
       return { valid: false, reason: 'Manifest content is empty.' };
     }
@@ -112,12 +155,33 @@ class ManifestSigner {
       return { valid: false, reason: 'Incomplete signature block: missing Signature, PublicKey, or PayloadDigest.' };
     }
 
+    // Authenticate signer identity against trusted root keyring
+    const trustedKeys = options.trustedKeys || (process.env.ASEF_TRUSTED_KEYS ? process.env.ASEF_TRUSTED_KEYS.split(',') : null);
+    if (trustedKeys && !trustedKeys.includes(meta.PublicKey)) {
+      return {
+        valid: false,
+        reason: `Untrusted signer identity: Public key '${meta.PublicKey.slice(0, 16)}...' is not in the trusted release authority keyring.`
+      };
+    }
+
     // Verify source tree hash binding if provided
     if (expectedSourceTreeHash && meta.SourceTreeHash && meta.SourceTreeHash !== expectedSourceTreeHash) {
       return {
         valid: false,
         reason: `Cryptographic binding mismatch: Manifest signed for tree ${meta.SourceTreeHash}, but current tree is ${expectedSourceTreeHash}.`
       };
+    }
+
+    // Verify complete manifest body content digest if present
+    if (meta.ContentDigest) {
+      const bodyClean = this.extractBody(manifestContent);
+      const currentContentDigest = crypto.createHash('sha256').update(bodyClean, 'utf8').digest('hex');
+      if (meta.ContentDigest !== currentContentDigest) {
+        return {
+          valid: false,
+          reason: `Manifest content tampering detected. Document body has been modified after signature creation.`
+        };
+      }
     }
 
     // Reconstruct canonical payload for signature verification
@@ -127,6 +191,9 @@ class ManifestSigner {
       releaseVersion: meta.ReleaseVersion || '1.0.0',
       sourceTreeHash: meta.SourceTreeHash || ''
     };
+    if (meta.ContentDigest) {
+      reconstructedPayload.contentDigest = meta.ContentDigest;
+    }
 
     const canonicalBytes = this.canonicalizePayload(reconstructedPayload);
     const computedDigest = crypto.createHash('sha256').update(canonicalBytes).digest('hex');
@@ -154,6 +221,7 @@ class ManifestSigner {
         algorithm: meta.Algorithm || 'Ed25519',
         sourceTreeHash: meta.SourceTreeHash,
         gitCommit: meta.GitCommit,
+        publicKey: meta.PublicKey,
         payloadDigest: meta.PayloadDigest
       };
     } catch (err) {

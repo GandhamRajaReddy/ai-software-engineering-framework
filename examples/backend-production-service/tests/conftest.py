@@ -1,20 +1,33 @@
+import os
 import pytest
 import pytest_asyncio
 from httpx import AsyncClient, ASGITransport
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
+from sqlalchemy import text
 from app.main import app
 from app.core.database import get_db
 from app.core.security import create_access_token
 from app.models.base import Base
 from app.models.tenant import Tenant
 
-TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
+TEST_DATABASE_URL = os.environ.get("DATABASE_URL") or "sqlite+aiosqlite:///:memory:"
 
 @pytest_asyncio.fixture(scope="session")
 async def test_engine():
     engine = create_async_engine(TEST_DATABASE_URL, echo=False)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # Configure PostgreSQL Row-Level Security if testing against PostgreSQL
+        if engine.dialect.name == "postgresql":
+            await conn.execute(text("ALTER TABLE items ENABLE ROW LEVEL SECURITY;"))
+            await conn.execute(text("ALTER TABLE items FORCE ROW LEVEL SECURITY;"))
+            await conn.execute(text("""
+                DROP POLICY IF EXISTS tenant_isolation_policy ON items;
+                CREATE POLICY tenant_isolation_policy ON items
+                FOR ALL
+                USING (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), ''))
+                WITH CHECK (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), ''));
+            """))
     yield engine
     await engine.dispose()
 

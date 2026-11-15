@@ -25,7 +25,7 @@ WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PATH="/install/bin:$PATH" \
-    PYTHONPATH="/app:$PYTHONPATH"
+    PYTHONPATH="/app:/install/lib/python3.12/site-packages:$PYTHONPATH"
 
 # Install runtime library dependencies only
 RUN apt-get update && apt-get install -y --no-install-recommends \
