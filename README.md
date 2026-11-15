@@ -171,7 +171,7 @@ node bin/asef.js evaluate-stack --proposed mern --acid true --seo true --rps 200
 
 ## 🏗️ Stack-Neutral Backend Engineering Skill Family
 
-Our framework is strictly **stack-neutral** and does not assume every backend uses Node.js or Express. It includes a comprehensive, independently selectable suite of 15 backend skills organized across four engineering pillars:
+Our framework is strictly **stack-neutral** and does not assume every backend uses Node.js or Express. It includes a comprehensive, independently selectable suite of **18 backend skills** organized across four engineering pillars:
 
 ```text
  ┌────────────────────────────────────────────────────────────────────────┐
@@ -181,18 +181,32 @@ Our framework is strictly **stack-neutral** and does not assume every backend us
  │ • backend-architecture (Clean) │ • fastapi-engineering (Python)        │
  │ • api-design-principles (REST) │ • django-drf-engineering (Python)     │
  │ • microservices-engineering    │ • golang-backend-engineering (Go)     │
- │                                │ • springboot-engineering (Java)       │
- │                                │ • nodejs-backend-engineering (Node/TS)│
+ │ • distributed-systems-         │ • springboot-engineering (Java)       │
+ │   reliability (Sagas, Outbox)  │ • nodejs-backend-engineering (Node/TS)│
  ├────────────────────────────────┼───────────────────────────────────────┤
  │ 3. Data Engineering            │ 4. Backend Quality & Infrastructure   │
  │ • database-engineering         │ • backend-security (OWASP Top 10)     │
  │   (PostgreSQL, MySQL, MongoDB) │ • backend-testing (TDD, Rollbacks)    │
- │ • database-migrations          │ • async-background-processing (Queues)│
- │ • caching-performance (Redis)  │ • backend-observability (OpenTelemetry│
+ │ • database-migrations          │ • api-contract-testing (Pact, OpenAPI)│
+ │ • caching-performance (Redis)  │ • backend-performance-engineering     │
+ │                                │ • async-background-processing (Queues)│
+ │                                │ • backend-observability (OpenTelemetry│
  └────────────────────────────────┴───────────────────────────────────────┘
 ```
 
-When a stack is chosen or evaluated, the Orchestration Engine dynamically binds the exact stack-specific backend skill into the specialist agent's prompt, preventing generic Express guidance from being fed into a FastAPI or Go project.
+When a stack is chosen or evaluated, the Orchestration Engine dynamically loads the exact stack-specific backend skill content and transitive dependencies via the built-in **Skill Registry**, preventing generic Express guidance from being fed into a FastAPI or Go project.
+
+---
+
+## 🔒 Hardened Orchestration Runtime & Evidence Integrity
+
+To prevent path traversal, code injection, and counterfeit claims, the orchestration runtime enforces 5 critical security and evidence layers:
+
+1. **Artifact Integrity Manager (`cli/artifact-integrity-manager.js`):** Enforces strict project root containment. Blocks path traversal (`../../`), writes to protected paths (`.git/`, `.env*`, `node_modules/`, `bin/`), and prevents execution of dangerous extensions (`.exe`, `.bat`, `.ps1`). Computes SHA-256 for all writes.
+2. **Execution Sandbox (`cli/execution-sandbox.js`):** Subprocesses execute shell-free (`shell: false`) with strict binary allowlisting (`npm`, `git`, `python`, `node`, `pytest`, `go`, `docker`). Secret environment variables are automatically scrubbed, and runaway processes are killed on timeout.
+3. **Immutable Evidence Registry (`cli/evidence-registry.js`):** Test and review evidence is cryptographically bound to a SHA-256 tree hash of all project source code. Any source mutation immediately invalidates test evidence (`stale: true`).
+4. **Mock Mode Quarantine:** Any output produced by mock execution (`isMock: true`) is strictly blocked from satisfying real release gates.
+5. **Release Policy Engine (`cli/release-policy-engine.js`):** Zero caller-controlled success overrides. Every release gate is evaluated purely from physical files and immutable evidence.
 
 
 ---

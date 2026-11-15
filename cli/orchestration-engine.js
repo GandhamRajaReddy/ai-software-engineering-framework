@@ -220,17 +220,16 @@ class OrchestrationEngine {
       }
 
       case 7: { // 07_RELEASE_GATE
-        const gateCheck = checkReleaseGate(this.projectDir, {
-          testsPassed: true,
-          requirementsPassed: true,
-          reviewPassed: true,
-          deployReady: true,
-          manifestPassed: true
-        });
+        const gateCheck = checkReleaseGate(this.projectDir);
         gateReport.checks.push({ name: 'All 7 Iron-Clad Release Gates (Score 100/100)', passed: gateCheck.isProductionReady });
         gateReport.passed = gateCheck.isProductionReady;
         if (!gateCheck.isProductionReady) {
           gateReport.errors.push(`Release Gate blocked. Score: ${gateCheck.totalScore}/100.`);
+          for (const g of gateCheck.gateResults) {
+            if (!g.passed) {
+              gateReport.errors.push(`[${g.id}] ${g.name}: ${g.evidence}`);
+            }
+          }
         }
         break;
       }

@@ -120,3 +120,44 @@ The Orchestration Engine dynamically injects stack-specific backend engineering 
 | **Node.js / TypeScript** (`modern-ts-fullstack`) | `nodejs-backend-engineering` | `database-engineering`, `database-migrations`, `backend-security`, `backend-testing`, `api-design-principles`, `frontend-design`, `brandkit` |
 | **Node.js / Express** (`mern`) | `nodejs-backend-engineering` | `database-engineering`, `backend-security`, `backend-testing`, `api-design-principles`, `frontend-design` |
 
+---
+
+## 5. Hardened Runtime & Evidence Integrity Architecture
+
+The Orchestration Engine enforces strict safety and provenance guarantees across all agent executions:
+
+```text
+  Model Output
+       │
+       ▼
+ ┌──────────────────────────────┐
+ │  Artifact Integrity Manager  │ ──► Root containment check, symlink trap,
+ │  (artifact-integrity-manager)│     protected path guard (.git, .env), SHA-256
+ └──────────────┬───────────────┘
+                │
+                ▼
+ ┌──────────────────────────────┐
+ │      Execution Sandbox       │ ──► Shell-free spawn (shell: false), allowlisted
+ │     (execution-sandbox)      │     binaries, env scrubbing, timeout & buffer cap
+ └──────────────┬───────────────┘
+                │
+                ▼
+ ┌──────────────────────────────┐
+ │      Evidence Registry       │ ──► Cryptographic binding: Git Commit + Source Hash
+ │     (evidence-registry)      │     Auto-invalidates test claims when source changes
+ └──────────────┬───────────────┘     Quarantines mock evidence from production gates
+                │
+                ▼
+ ┌──────────────────────────────┐
+ │     Release Policy Engine    │ ──► Zero caller overrides. Pure evidence-driven
+ │    (release-policy-engine)   │     evaluation across all 7 production gates
+ └──────────────────────────────┘
+```
+
+1. **Artifact Path Containment:** Validates every generated file block against `projectDir`. Blocks path traversal (`../../`), writes to protected paths (`.git/`, `.env*`, `node_modules/`), and disallowed executable extensions (`.exe`, `.bat`, `.ps1`).
+2. **Subprocess Isolation:** Commands execute shell-free (`shell: false`) with strict binary allowlisting (`npm`, `git`, `python`, `node`, `pytest`, `go`, `docker`). Sensitive credentials in `process.env` are automatically scrubbed.
+3. **Cryptographic Source-Hash Binding:** Test execution evidence is bound to a deterministic SHA-256 tree hash of all project code files. If any file changes after tests run, evidence is immediately marked `stale: true`, halting the release gate.
+4. **Mock Quarantine:** Mock outputs (`isMock: true`) are explicitly isolated and cannot satisfy real production release gates.
+5. **Zero-Override Release Policy:** Gates cannot be bypassed by caller parameters. Every release requires physical, fresh, verified evidence.
+
+

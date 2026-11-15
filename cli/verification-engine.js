@@ -1,44 +1,58 @@
 /**
- * Verification & Anti-Hallucination Engine
+ * Verification & Anti-Hallucination Engine (Hardened)
  * Enforces the Iron Law: "Evidence before claims, always."
- * Verifies executable tests, inspects exit codes, and confirms filesystem grounding.
+ * Verifies executable tests inside safe sandboxes, inspects exit codes,
+ * records immutable cryptographically-bound evidence, and confirms filesystem grounding.
  */
 
-const { execSync } = require('child_process');
+const { spawnSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+const { parseCommandString, validateExecutable, sanitizeEnvironment } = require('./execution-sandbox');
+const { recordEvidence } = require('./evidence-registry');
 
 /**
- * Runs an executable verification command and captures structured evidence
+ * Runs an executable verification command shell-free and captures structured evidence
  */
-function runVerificationCommand(command, cwd = process.cwd()) {
+function runVerificationCommand(command, cwd = process.cwd(), options = {}) {
   const startTime = Date.now();
+  const resolvedCwd = path.resolve(cwd);
   let stdout = '';
   let stderr = '';
   let exitCode = 0;
   let passed = false;
 
+  let parsed;
   try {
-    stdout = execSync(command, {
-      cwd,
+    parsed = parseCommandString(command);
+    validateExecutable(parsed.executable);
+
+    const cleanEnv = sanitizeEnvironment(options.env || process.env, options.allowedEnvKeys || []);
+    const res = spawnSync(parsed.executable, parsed.args, {
+      cwd: resolvedCwd,
+      env: cleanEnv,
       encoding: 'utf8',
+      shell: false, // Shell-free execution
       stdio: ['pipe', 'pipe', 'pipe'],
-      timeout: 120000 // 2 minutes
+      timeout: options.timeoutMs || 120000,
+      windowsHide: true
     });
-    passed = true;
-    exitCode = 0;
+
+    exitCode = res.status !== null ? res.status : 1;
+    stdout = res.stdout ? res.stdout.toString() : '';
+    stderr = res.stderr ? res.stderr.toString() : (res.error ? res.error.message : '');
+    passed = exitCode === 0;
   } catch (err) {
-    exitCode = err.status !== undefined ? err.status : 1;
-    stdout = err.stdout ? err.stdout.toString() : '';
-    stderr = err.stderr ? err.stderr.toString() : err.message;
+    exitCode = 1;
+    stderr = err.message;
     passed = false;
   }
 
   const durationMs = Date.now() - startTime;
 
-  return {
+  const evidenceResult = {
     command,
-    cwd,
+    cwd: resolvedCwd,
     exitCode,
     passed,
     durationMs,
@@ -46,6 +60,27 @@ function runVerificationCommand(command, cwd = process.cwd()) {
     stdout: stdout.trim(),
     stderr: stderr.trim()
   };
+
+  // Record in immutable evidence registry
+  try {
+    recordEvidence(resolvedCwd, {
+      type: 'TEST_EXECUTION',
+      command,
+      exitCode,
+      passed,
+      durationMs,
+      isMock: Boolean(options.isMock),
+      summary: passed ? 'Test verification passed' : `Test execution failed with exit code ${exitCode}`,
+      details: {
+        stdoutSnippet: stdout.slice(0, 1000),
+        stderrSnippet: stderr.slice(0, 1000)
+      }
+    });
+  } catch (e) {
+    // Registry write is best-effort if cwd is uninitialized
+  }
+
+  return evidenceResult;
 }
 
 /**
