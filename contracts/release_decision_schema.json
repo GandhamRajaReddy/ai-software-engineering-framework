@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ASEF Release Decision Schema",
+  "type": "object",
+  "required": [
+    "decision_id",
+    "timestamp",
+    "sourceTreeHash",
+    "verdict",
+    "score",
+    "gate_evaluations",
+    "cryptographic_proofs"
+  ],
+  "properties": {
+    "decision_id": {
+      "type": "string"
+    },
+    "timestamp": {
+      "type": "string"
+    },
+    "sourceTreeHash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "verdict": {
+      "type": "string",
+      "enum": ["PASSED", "REJECTED"]
+    },
+    "score": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "gate_evaluations": {
+      "type": "object",
+      "required": [
+        "gate_1_requirements_traceability",
+        "gate_2_stack_alignment",
+        "gate_3_task_decomposition",
+        "gate_4_implementation_integrity",
+        "gate_5_verification_evidence",
+        "gate_6_deployment_hardening",
+        "gate_7_manifest_signing"
+      ]
+    },
+    "cryptographic_proofs": {
+      "type": "object",
+      "required": ["evidence_record_ids", "git_commit"]
+    }
+  },
+  "additionalProperties": false
+}

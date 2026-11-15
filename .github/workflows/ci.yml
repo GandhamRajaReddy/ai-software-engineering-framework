@@ -6,33 +6,52 @@ on:
   pull_request:
     branches: [main, master]
 
-jobs:
-  test:
-    name: Automated Verification & Unit Tests
-    runs-on: ubuntu-latest
+permissions:
+  contents: read
 
+jobs:
+  dependency-review:
+    name: Dependency Security Review
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Dependency Review
+        uses: actions/dependency-review-action@v4
+
+  test:
+    name: Hardened Subprocess & Verification Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: 'npm'
 
-      - name: Install Dependencies
-        run: npm install
+      - name: Reproducible Install
+        run: npm ci || npm install
 
       - name: Run Test Suite
         run: npm test
 
   security-audit:
-    name: SkillSpector & Security Gate
+    name: SkillSpector & Release Policy Audit
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v4

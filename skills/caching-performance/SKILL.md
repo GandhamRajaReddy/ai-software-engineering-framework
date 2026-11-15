@@ -403,3 +403,57 @@ Use Pub/Sub for fire-and-forget. Switch to Streams if you need guaranteed delive
 - Skill: `database-migrations` — schema versioning
 - Skill: `django-patterns` — Django cache framework integration
 - Agent: `database-reviewer` — full database review workflow
+
+
+## Stampede Prevention & Eviction Policies
+
+### 1. Cache Stampede Prevention (Probabilistic Early Expiration: XFetch)
+
+When high-traffic cache keys expire, hundreds of concurrent requests hit the database simultaneously. Use the XFetch algorithm to refresh the cache asynchronously before expiration:
+
+```python
+import math
+import random
+import time
+
+def get_with_xfetch(redis_client, key: str, compute_func, ttl: int, beta: float = 1.0):
+    """
+    XFetch (Optimal Probabilistic Cache Expiration)
+    Reference: Vattani et al. (VLDB)
+    """
+    entry = redis_client.hgetall(key)
+    now = time.time()
+
+    if entry:
+        value = entry['value']
+        delta = float(entry['delta']) # Duration of compute_func in seconds
+        expiry = float(entry['expiry'])
+
+        # Probabilistic trigger: earlier refresh when delta is large or near expiry
+        if (now - (delta * beta * math.log(random.random()))) < expiry:
+            return value
+
+    # Compute fresh value
+    start = time.time()
+    fresh_value = compute_func()
+    compute_duration = time.time() - start
+
+    redis_client.hset(key, mapping={
+        'value': fresh_value,
+        'delta': str(compute_duration),
+        'expiry': str(now + ttl)
+    })
+    redis_client.expire(key, ttl + 300) # Buffer TTL
+    return fresh_value
+```
+
+### 2. Production Eviction Policies
+
+Configure Redis eviction policy to match data durability expectations:
+
+| Policy | Behavior | Production Recommendation |
+|:-------|:---------|:--------------------------|
+| `volatile-lru` | Evicts least recently used keys with an explicit TTL | Default for mixed cache and session stores |
+| `allkeys-lru` | Evicts any LRU key regardless of TTL | Best for pure read-through caching |
+| `volatile-lfu` | Evicts least frequently used keys with TTL | Best for preventing burst pollution |
+| `noeviction` | Returns OOM errors on writes when memory limit reached | Required for message queues / event stores |

@@ -2,7 +2,7 @@
 
 > **Runtime:** `cli/orchestration-engine.js`  
 > **CLI Interface:** `asef pipeline <command>`  
-> **Status:** Active & Production Verified (16/16 Tests Passing)
+> **Status:** Active & Production Hardened (38+ Automated Runtime Tests Passing)
 
 The **Orchestration Engine** is the central nervous system of the AI Software Engineering Framework. It connects the disparate skills, specialist agents, contract templates, and verification gates into one coherent, automated, and tamper-proof development lifecycle.
 
@@ -12,11 +12,13 @@ The **Orchestration Engine** is the central nervous system of the AI Software En
 
 ```mermaid
 flowchart TD
-    subgraph Engine ["Orchestration Engine (State Machine)"]
+    subgraph Engine ["Orchestration Engine (State Machine & Scheduler)"]
         direction TB
         SM["State Manager: .asef/pipeline-state.json"]
+        DAG["Task DAG Scheduler (cli/task-dag-scheduler.js)"]
         GV["Gate Validator (Criteria & Invariants)"]
         HD["Agent Handoff Dispatcher"]
+        SR["Skill Registry & Token Budgeting (cli/skill-registry.js)"]
     end
 
     subgraph Inputs ["Lifecycle Stages & Contracts"]
@@ -46,14 +48,17 @@ flowchart TD
         T_SEC["SkillSpector Scanner (cli/skillspector-scanner.js)"]
         T_VER["Verification Engine (cli/verification-engine.js)"]
         T_DRIFT["Drift Detector (cli/drift-detector.js)"]
-        T_GATE["Release Gate Checker (cli/release-gate-checker.js)"]
+        T_RPE["Release Policy Engine (cli/release-policy-engine.js)"]
+        T_EVID["Evidence Registry (cli/evidence-registry.js)"]
     end
 
-    SM --> Inputs
+    SM --> DAG
+    DAG --> Inputs
     Inputs <--> GV
     GV --> Tools
     GV -->|Gate Passed| HD
-    HD --> Specialists
+    HD --> SR
+    SR --> Specialists
 ```
 
 ---
@@ -65,11 +70,11 @@ flowchart TD
 | **00** | Raw User Prompt | `Orchestrator` & `Requirements Analyst` | `evidence-based-stack-selection` | Problem boundary extraction | `00_problem_statement.md` |
 | **01** | `00_problem_statement.md` | `Requirements Analyst` | `evidence-based-stack-selection` | Unique `REQ-XXX` identifier validation | `01_requirements_spec.md` |
 | **02** | `01_requirements_spec.md` | `System Architect` | `evidence-based-stack-selection` | `cli/stack-evaluator.js` (MCDM scoring) | `02_tech_decision_record.md` |
-| **03** | `02_tech_decision_record.md` | `Task Planner` | `token-budget-optimization` | Task atomization (<=50 lines) & prerequisites | `03_implementation_plan.md` |
+| **03** | `02_tech_decision_record.md` | `Task Planner` | `token-budget-optimization` | Task DAG dependency graph & lock scheduling | `03_implementation_plan.md` |
 | **04** | `03_implementation_plan.md` | `Senior Builder` | `surgical-implementation-tdd` | Red-Green-Refactor TDD cycle & zero ellipses | `04_patch_contract.md` + Code |
 | **05** | Source Code & Patches | `Test Lead` & `Security Auditor` | `verification-before-completion` | `cli/verification-engine.js` + `cli/skillspector-scanner.js` | `05_verification_report.md` |
 | **06** | `05_verification_report.md` | `DevOps Engineer` | `production-deployment-gate` | Multi-stage Docker build, non-root user, `/healthz` | `Dockerfile`, `docker-compose.yml` |
-| **07** | All Prior Artifacts | `Release Manager` | `production-deployment-gate` | `cli/release-gate-checker.js` (100/100 required) | `07_release_manifest.md` |
+| **07** | All Prior Artifacts | `Release Manager` | `production-deployment-gate` | `cli/release-policy-engine.js` (100/100 required, zero overrides) | `07_release_manifest.md` |
 
 ---
 
@@ -109,7 +114,7 @@ node bin/asef.js pipeline rollback 2
 
 ## 4. Stack-Specific Backend Skills Binding
 
-The Orchestration Engine dynamically injects stack-specific backend engineering skills into agent prompts based on the evaluated or chosen stack.
+The Orchestration Engine dynamically injects stack-specific backend engineering skills into agent prompts based on the evaluated or chosen stack:
 
 | Evaluated Stack | Bound Backend Skills | Bound Architecture & Quality Skills |
 |:----------------|:---------------------|:-----------------------------------|
@@ -159,5 +164,4 @@ The Orchestration Engine enforces strict safety and provenance guarantees across
 3. **Cryptographic Source-Hash Binding:** Test execution evidence is bound to a deterministic SHA-256 tree hash of all project code files. If any file changes after tests run, evidence is immediately marked `stale: true`, halting the release gate.
 4. **Mock Quarantine:** Mock outputs (`isMock: true`) are explicitly isolated and cannot satisfy real production release gates.
 5. **Zero-Override Release Policy:** Gates cannot be bypassed by caller parameters. Every release requires physical, fresh, verified evidence.
-
-
+6. **Task DAG Concurrency & File Ownership:** Tasks are modeled as a Directed Acyclic Graph (DAG) with Kahn's topological sort. Tasks touching shared files are scheduled sequentially to prevent concurrent write collisions.

@@ -428,3 +428,36 @@ Day 7: Migration drops old status column
 | Inline index on large table | Blocks writes during build | CREATE INDEX CONCURRENTLY |
 | Schema + data in one migration | Hard to rollback, long transactions | Separate migrations |
 | Dropping column before removing code | Application errors on missing column | Remove code first, drop column next deploy |
+
+
+## Migration Rehearsal & Drift Detection
+
+### 1. Automated Migration Rehearsal Pipeline
+
+Never run a migration in production without testing it against a sanitized, production-scale shadow database:
+
+1. **Shadow Restore**: Restore latest sanitized backup into an isolated staging/ephemeral container.
+2. **Pre-Flight Lock Check**: Run `EXPLAIN (ANALYZE, BUFFERS)` on table modification queries to check for AccessExclusiveLock risks.
+3. **Timed Execution**: Run `migrate up` while measuring duration. If migration takes > 5 seconds, it must be rewritten into batched chunks.
+4. **Rollback Rehearsal**: Immediately run `migrate down` to verify reversibility and schema parity.
+
+### 2. Schema Drift Detection
+
+Detect out-of-band schema modifications (e.g. manual DBA changes) during CI:
+
+```bash
+# Compare live database schema with declared migration state
+alembic check || { echo "ERROR: Live database schema has drifted from migrations!"; exit 1; }
+
+# For PostgreSQL with pg_dump:
+pg_dump --schema-only -d staging_db > current_schema.sql
+pg_dump --schema-only -d freshly_migrated_db > expected_schema.sql
+diff -u expected_schema.sql current_schema.sql || exit 1
+```
+
+### 3. Recovery from Partially Applied Migrations
+
+When a migration fails midway (especially on databases without transactional DDL like MySQL):
+1. **Quarantine State**: Query `schema_migrations` or `alembic_version` to ascertain exact applied state.
+2. **Idempotent Repair**: Write an explicit forward repair script with `IF NOT EXISTS` / `IF EXISTS` clauses.
+3. **Data Reconciliation**: Run verification queries comparing foreign key integrity and checksums across modified tables.

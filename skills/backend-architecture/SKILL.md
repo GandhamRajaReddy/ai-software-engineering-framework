@@ -1,562 +1,297 @@
 ---
 name: backend-architecture
-description: Foundational backend architecture patterns, Clean Architecture, service-repository layers, domain boundaries, SOLID principles, and database access strategies. Use when architecting server-side systems, establishing domain boundaries, or designing layered services.
+description: Language-neutral Clean Architecture, Domain-Driven Design (DDD), Ports & Adapters, SOLID principles, entity-boundary isolation, and repository/service patterns across polyglot backend environments (Python, Go, Java, TypeScript). Use when architecting server-side systems, establishing domain boundaries, or designing layered services.
 metadata:
   origin: ASEF
 ---
 
-# Backend Development Patterns
+# Universal Backend Architecture & Domain-Driven Design
 
-Backend architecture patterns and best practices for scalable server-side applications.
+Foundational, stack-neutral patterns for building robust, scalable, and testable server-side applications.
 
-## When to Activate
+## Architectural Foundations
 
-- Designing REST or GraphQL API endpoints
-- Implementing repository, service, or controller layers
-- Optimizing database queries (N+1, indexing, connection pooling)
-- Adding caching (Redis, in-memory, HTTP cache headers)
-- Setting up background jobs or async processing
-- Structuring error handling and validation for APIs
-- Building middleware (auth, logging, rate limiting)
+A production backend must decouple core business logic from delivery mechanisms (HTTP, gRPC, CLI) and persistence technologies (PostgreSQL, MongoDB, DynamoDB). Following **Clean Architecture** and **Ports & Adapters (Hexagonal Architecture)** ensures the domain layer remains pure, portable, and independently testable.
 
-## API Design Patterns
+### The Dependency Rule
 
-### RESTful API Structure
-
-```typescript
-// PASS: Resource-based URLs
-GET    /api/markets                 # List resources
-GET    /api/markets/:id             # Get single resource
-POST   /api/markets                 # Create resource
-PUT    /api/markets/:id             # Replace resource
-PATCH  /api/markets/:id             # Update resource
-DELETE /api/markets/:id             # Delete resource
-
-// PASS: Query parameters for filtering, sorting, pagination
-GET /api/markets?status=active&sort=volume&limit=20&offset=0
+```
+┌────────────────────────────────────────────────────────┐
+│             Presentation / Transport Layer             │
+│       (REST Controllers, GraphQL, gRPC, CLI)           │
+├────────────────────────────────────────────────────────┤
+│             Infrastructure / Drivers Layer             │
+│        (Database, Cache, Message Broker, HTTP)         │
+├────────────────────────────────────────────────────────┤
+│                 Application Layer                      │
+│        (Use Cases, Commands, Queries, Ports)           │
+├────────────────────────────────────────────────────────┤
+│                   Domain Layer                         │
+│   (Entities, Value Objects, Aggregates, Invariants)    │
+│            * ZERO EXTERNAL DEPENDENCIES *              │
+└────────────────────────────────────────────────────────┘
+                       ▲
+        Dependencies point strictly INWARD
 ```
 
-### Repository Pattern
+1. **Domain Layer**: Contains enterprise business rules, entities, value objects, and domain exceptions. It has no external dependencies—no ORMs, no HTTP frameworks, no vendor SDKs.
+2. **Application Layer**: Contains application-specific use cases, command/query handlers, and abstract port interfaces (inbound and outbound).
+3. **Infrastructure Layer**: Implements outbound ports (database repositories, message publishers, external API clients).
+4. **Presentation Layer**: Implements inbound adapters (HTTP handlers, CLI commands, queue consumers) that translate transport protocols into application commands.
 
-```typescript
-// Abstract data access logic
-interface MarketRepository {
-  findAll(filters?: MarketFilters): Promise<Market[]>
-  findById(id: string): Promise<Market | null>
-  create(data: CreateMarketDto): Promise<Market>
-  update(id: string, data: UpdateMarketDto): Promise<Market>
-  delete(id: string): Promise<void>
-}
+---
 
-class SupabaseMarketRepository implements MarketRepository {
-  async findAll(filters?: MarketFilters): Promise<Market[]> {
-    let query = supabase.from('markets').select('*')
+## Domain-Driven Design (DDD) Primitives
 
-    if (filters?.status) {
-      query = query.eq('status', filters.status)
-    }
+### 1. Entities and Value Objects
 
-    if (filters?.limit) {
-      query = query.limit(filters.limit)
-    }
+- **Entity**: An object defined by its continuous identity throughout its lifecycle, rather than its attributes. Two entities with the same ID represent the same business object.
+- **Value Object**: An immutable object defined entirely by the combination of its attributes. It has no conceptual identity. If any attribute changes, it is a different value.
 
-    const { data, error } = await query
+#### Python Example
 
-    if (error) throw new Error(error.message)
-    return data
-  }
+```python
+from dataclasses import dataclass
+from decimal import Decimal
+import uuid
 
-  // Other methods...
-}
+# Value Object: Immutable with self-validation
+@dataclass(frozen=True)
+class Money:
+    amount: Decimal
+    currency: str
+
+    def __post_init__(self):
+        if self.amount < 0:
+            raise ValueError("Money amount cannot be negative.")
+        if len(self.currency) != 3 or not self.currency.isupper():
+            raise ValueError("Currency must be a 3-letter ISO code.")
+
+    def add(self, other: "Money") -> "Money":
+        if self.currency != other.currency:
+            raise ValueError(f"Cannot add {other.currency} to {self.currency}")
+        return Money(self.amount + other.amount, self.currency)
+
+# Entity: Identity-based with state transitions
+class Account:
+    def __init__(self, account_id: uuid.UUID, owner_id: uuid.UUID, initial_balance: Money):
+        self.id = account_id
+        self.owner_id = owner_id
+        self._balance = initial_balance
+        self._is_frozen = False
+
+    @property
+    def balance(self) -> Money:
+        return self._balance
+
+    def deposit(self, amount: Money) -> None:
+        if self._is_frozen:
+            raise ValueError("Cannot deposit into a frozen account.")
+        self._balance = self._balance.add(amount)
+
+    def freeze(self) -> None:
+        self._is_frozen = True
 ```
 
-### Service Layer Pattern
+#### Go Example
 
-```typescript
-// Business logic separated from data access
-class MarketService {
-  constructor(private marketRepo: MarketRepository) {}
+```go
+package domain
 
-  async searchMarkets(query: string, limit: number = 10): Promise<Market[]> {
-    // Business logic
-    const embedding = await generateEmbedding(query)
-    const results = await this.vectorSearch(embedding, limit)
-
-    // Fetch full data
-    const markets = await this.marketRepo.findByIds(results.map(r => r.id))
-
-    // Sort by similarity
-    return markets.sort((a, b) => {
-      const scoreA = results.find(r => r.id === a.id)?.score || 0
-      const scoreB = results.find(r => r.id === b.id)?.score || 0
-      return scoreA - scoreB
-    })
-  }
-
-  private async vectorSearch(embedding: number[], limit: number) {
-    // Vector search implementation
-  }
-}
-```
-
-### Middleware Pattern
-
-```typescript
-// Request/response processing pipeline
-export function withAuth(handler: NextApiHandler): NextApiHandler {
-  return async (req, res) => {
-    const token = req.headers.authorization?.replace('Bearer ', '')
-
-    if (!token) {
-      return res.status(401).json({ error: 'Unauthorized' })
-    }
-
-    try {
-      const user = await verifyToken(token)
-      req.user = user
-      return handler(req, res)
-    } catch (error) {
-      return res.status(401).json({ error: 'Invalid token' })
-    }
-  }
-}
-
-// Usage
-export default withAuth(async (req, res) => {
-  // Handler has access to req.user
-})
-```
-
-## Database Patterns
-
-### Query Optimization
-
-```typescript
-// PASS: GOOD: Select only needed columns
-const { data } = await supabase
-  .from('markets')
-  .select('id, name, status, volume')
-  .eq('status', 'active')
-  .order('volume', { ascending: false })
-  .limit(10)
-
-// FAIL: BAD: Select everything
-const { data } = await supabase
-  .from('markets')
-  .select('*')
-```
-
-### N+1 Query Prevention
-
-```typescript
-// FAIL: BAD: N+1 query problem
-const markets = await getMarkets()
-for (const market of markets) {
-  market.creator = await getUser(market.creator_id)  // N queries
-}
-
-// PASS: GOOD: Batch fetch
-const markets = await getMarkets()
-const creatorIds = markets.map(m => m.creator_id)
-const creators = await getUsers(creatorIds)  // 1 query
-const creatorMap = new Map(creators.map(c => [c.id, c]))
-
-markets.forEach(market => {
-  market.creator = creatorMap.get(market.creator_id)
-})
-```
-
-### Transaction Pattern
-
-```typescript
-async function createMarketWithPosition(
-  marketData: CreateMarketDto,
-  positionData: CreatePositionDto
-) {
-  // Use Supabase transaction
-  const { data, error } = await supabase.rpc('create_market_with_position', {
-    market_data: marketData,
-    position_data: positionData
-  })
-
-  if (error) throw new Error('Transaction failed')
-  return data
-}
-
-// SQL function in Supabase
-CREATE OR REPLACE FUNCTION create_market_with_position(
-  market_data jsonb,
-  position_data jsonb
+import (
+	"errors"
+	"fmt"
+	"github.com/google/uuid"
 )
-RETURNS jsonb
-LANGUAGE plpgsql
-AS $$
-BEGIN
-  -- Start transaction automatically
-  INSERT INTO markets VALUES (market_data);
-  INSERT INTO positions VALUES (position_data);
-  RETURN jsonb_build_object('success', true);
-EXCEPTION
-  WHEN OTHERS THEN
-    -- Rollback happens automatically
-    RETURN jsonb_build_object('success', false, 'error', SQLERRM);
-END;
-$$;
-```
 
-## Caching Strategies
+// Value Object: Money
+type Money struct {
+	amount   int64 // Stored in minor units (e.g. cents)
+	currency string
+}
 
-### Redis Caching Layer
+func NewMoney(amount int64, currency string) (Money, error) {
+	if amount < 0 {
+		return Money{}, errors.New("money amount cannot be negative")
+	}
+	if len(currency) != 3 {
+		return Money{}, errors.New("currency must be 3-letter ISO code")
+	}
+	return Money{amount: amount, currency: currency}, nil
+}
 
-```typescript
-class CachedMarketRepository implements MarketRepository {
-  constructor(
-    private baseRepo: MarketRepository,
-    private redis: RedisClient
-  ) {}
+func (m Money) Add(other Money) (Money, error) {
+	if m.currency != other.currency {
+		return Money{}, fmt.Errorf("currency mismatch: %s vs %s", m.currency, other.currency)
+	}
+	return Money{amount: m.amount + other.amount, currency: m.currency}, nil
+}
 
-  async findById(id: string): Promise<Market | null> {
-    // Check cache first
-    const cached = await this.redis.get(`market:${id}`)
+// Entity: Account
+type Account struct {
+	ID       uuid.UUID
+	OwnerID  uuid.UUID
+	balance  Money
+	isFrozen bool
+}
 
-    if (cached) {
-      return JSON.parse(cached)
-    }
-
-    // Cache miss - fetch from database
-    const market = await this.baseRepo.findById(id)
-
-    if (market) {
-      // Cache for 5 minutes
-      await this.redis.setex(`market:${id}`, 300, JSON.stringify(market))
-    }
-
-    return market
-  }
-
-  async invalidateCache(id: string): Promise<void> {
-    await this.redis.del(`market:${id}`)
-  }
+func (a *Account) Deposit(amount Money) error {
+	if a.isFrozen {
+		return errors.New("cannot deposit into a frozen account")
+	}
+	newBalance, err := a.balance.Add(amount)
+	if err != nil {
+		return err
+	}
+	a.balance = newBalance
+	return nil
 }
 ```
 
-### Cache-Aside Pattern
+---
 
-```typescript
-async function getMarketWithCache(id: string): Promise<Market> {
-  const cacheKey = `market:${id}`
+## Ports & Adapters (Hexagonal Architecture)
 
-  // Try cache
-  const cached = await redis.get(cacheKey)
-  if (cached) return JSON.parse(cached)
+Ports define contracts that decouple domain orchestration from concrete implementations.
 
-  // Cache miss - fetch from DB
-  const market = await db.markets.findUnique({ where: { id } })
+### Outbound Port: Repository Interface
 
-  if (!market) throw new Error('Market not found')
+The application defines what persistence capabilities it requires. The database adapter fulfills the interface.
 
-  // Update cache
-  await redis.setex(cacheKey, 300, JSON.stringify(market))
+```python
+# application/ports/account_repository.py
+from abc import ABC, abstractmethod
+import uuid
+from typing import Optional
+from domain.account import Account
 
-  return market
-}
+class AccountRepositoryPort(ABC):
+    @abstractmethod
+    def find_by_id(self, account_id: uuid.UUID) -> Optional[Account]:
+        """Retrieve an account by its unique ID."""
+        pass
+
+    @abstractmethod
+    def save(self, account: Account) -> None:
+        """Persist account state changes."""
+        pass
 ```
 
-## Error Handling Patterns
+### Use Case: Application Orchestration
 
-### Centralized Error Handler
+Use cases execute domain rules and coordinate state changes through ports.
 
-```typescript
-class ApiError extends Error {
-  constructor(
-    public statusCode: number,
-    public message: string,
-    public isOperational = true
-  ) {
-    super(message)
-    Object.setPrototypeOf(this, ApiError.prototype)
-  }
-}
+```python
+# application/use_cases/deposit_funds.py
+from dataclasses import dataclass
+from decimal import Decimal
+import uuid
+from application.ports.account_repository import AccountRepositoryPort
+from domain.account import Money
 
-export function errorHandler(error: unknown, req: Request): Response {
-  if (error instanceof ApiError) {
-    return NextResponse.json({
-      success: false,
-      error: error.message
-    }, { status: error.statusCode })
-  }
+@dataclass(frozen=True)
+class DepositCommand:
+    account_id: uuid.UUID
+    amount: Decimal
+    currency: str
 
-  if (error instanceof z.ZodError) {
-    return NextResponse.json({
-      success: false,
-      error: 'Validation failed',
-      details: error.issues
-    }, { status: 400 })
-  }
+class DepositFundsUseCase:
+    def __init__(self, account_repo: AccountRepositoryPort):
+        self._account_repo = account_repo
 
-  // Log unexpected errors
-  console.error('Unexpected error:', error)
+    def execute(self, cmd: DepositCommand) -> None:
+        account = self._account_repo.find_by_id(cmd.account_id)
+        if not account:
+            raise ValueError(f"Account {cmd.account_id} not found.")
 
-  return NextResponse.json({
-    success: false,
-    error: 'Internal server error'
-  }, { status: 500 })
-}
-
-// Usage
-export async function GET(request: Request) {
-  try {
-    const data = await fetchData()
-    return NextResponse.json({ success: true, data })
-  } catch (error) {
-    return errorHandler(error, request)
-  }
-}
+        money = Money(cmd.amount, cmd.currency)
+        account.deposit(money)
+        self._account_repo.save(account)
 ```
 
-### Retry with Exponential Backoff
+---
 
-```typescript
-async function fetchWithRetry<T>(
-  fn: () => Promise<T>,
-  maxRetries = 3
-): Promise<T> {
-  let lastError: Error
+## Aggregate Roots and Consistency Boundaries
 
-  for (let i = 0; i < maxRetries; i++) {
-    try {
-      return await fn()
-    } catch (error) {
-      lastError = error as Error
+An **Aggregate** is a cluster of associated objects treated as a single unit for data changes. Every aggregate has an **Aggregate Root**:
+- External objects may only hold references to the Aggregate Root.
+- Invariants within the aggregate boundary are enforced synchronously within a single database transaction.
+- **Rule of Thumb**: One database transaction should modify exactly one Aggregate instance.
+- Cross-aggregate consistency must be achieved asynchronously via Domain Events and the Transactional Outbox pattern.
 
-      if (i < maxRetries - 1) {
-        // Exponential backoff: 1s, 2s, 4s
-        const delay = Math.pow(2, i) * 1000
-        await new Promise(resolve => setTimeout(resolve, delay))
-      }
-    }
-  }
-
-  throw lastError!
-}
-
-// Usage
-const data = await fetchWithRetry(() => fetchFromAPI())
+```
+┌────────────────────────────────────────────────────────┐
+│ Order Aggregate (Boundary)                             │
+│                                                        │
+│  ┌───────────────────────┐                             │
+│  │ Order (Aggregate Root)│                             │
+│  └──────────┬────────────┘                             │
+│             │ 1..*                                     │
+│  ┌──────────▼────────────┐                             │
+│  │ OrderLine (Entity)    │                             │
+│  └──────────┬────────────┘                             │
+│             │ 1                                        │
+│  ┌──────────▼────────────┐                             │
+│  │ Price (Value Object)  │                             │
+│  └───────────────────────┘                             │
+└────────────────────────────────────────────────────────┘
 ```
 
-## Authentication & Authorization
+---
 
-### JWT Token Validation
+## Domain Events & Eventual Consistency
 
-```typescript
-import jwt from 'jsonwebtoken'
+When an Aggregate undergoes state transitions that affect other contexts, it records a Domain Event:
 
-interface JWTPayload {
-  userId: string
-  email: string
-  role: 'admin' | 'user'
-}
+```python
+@dataclass(frozen=True)
+class OrderPlacedEvent:
+    event_id: uuid.UUID
+    order_id: uuid.UUID
+    customer_id: uuid.UUID
+    total_amount: Decimal
+    currency: str
+    occurred_at: str
 
-export function verifyToken(token: string): JWTPayload {
-  try {
-    const payload = jwt.verify(token, process.env.JWT_SECRET!) as JWTPayload
-    return payload
-  } catch (error) {
-    throw new ApiError(401, 'Invalid token')
-  }
-}
+class Order:
+    def __init__(self, order_id: uuid.UUID, customer_id: uuid.UUID):
+        self.id = order_id
+        self.customer_id = customer_id
+        self.events: list[object] = []
 
-export async function requireAuth(request: Request) {
-  const token = request.headers.get('authorization')?.replace('Bearer ', '')
-
-  if (!token) {
-    throw new ApiError(401, 'Missing authorization token')
-  }
-
-  return verifyToken(token)
-}
-
-// Usage in API route
-export async function GET(request: Request) {
-  const user = await requireAuth(request)
-
-  const data = await getDataForUser(user.userId)
-
-  return NextResponse.json({ success: true, data })
-}
+    def place_order(self, lines: list[OrderLine], currency: str) -> None:
+        if not lines:
+            raise ValueError("Order must contain at least one line item.")
+        self.events.append(OrderPlacedEvent(
+            event_id=uuid.uuid4(),
+            order_id=self.id,
+            customer_id=self.customer_id,
+            total_amount=self.calculate_total(),
+            currency=currency,
+            occurred_at=datetime.utcnow().isoformat()
+        ))
 ```
 
-### Role-Based Access Control
+---
 
-```typescript
-type Permission = 'read' | 'write' | 'delete' | 'admin'
+## Architecture Anti-Patterns
 
-interface User {
-  id: string
-  role: 'admin' | 'moderator' | 'user'
-}
+| Anti-Pattern | Symptom | Correct Architecture Solution |
+|:-------------|:--------|:------------------------------|
+| **Anemic Domain Model** | Entities are bags of getters/setters; all logic resides in "Fat Services" | Encapsulate business invariants and state transitions inside Domain Entities |
+| **Leaky Abstraction** | ORM entities (SQLAlchemy, Hibernate) are passed directly to API responses | Map ORM models to Domain Entities in the persistence adapter; map to DTOs in presentation |
+| **God Service** | Single service class with 50+ methods handling multiple business capabilities | Decompose into focused Use Case classes implementing a single command or query |
+| **Distributed Monolith** | Microservices sharing a single database or requiring synchronous cascading HTTP calls | Enforce database-per-service; communicate via asynchronous events and eventual consistency |
+| **Direct Vendor Coupling** | Domain logic imports AWS SDK, Stripe client, or database driver | Abstract third-party services behind Application Port interfaces; implement in Infrastructure |
 
-const rolePermissions: Record<User['role'], Permission[]> = {
-  admin: ['read', 'write', 'delete', 'admin'],
-  moderator: ['read', 'write', 'delete'],
-  user: ['read', 'write']
-}
+---
 
-export function hasPermission(user: User, permission: Permission): boolean {
-  return rolePermissions[user.role].includes(permission)
-}
+## Architecture Review Checklist
 
-export function requirePermission(permission: Permission) {
-  return (handler: (request: Request, user: User) => Promise<Response>) => {
-    return async (request: Request) => {
-      const user = await requireAuth(request)
-
-      if (!hasPermission(user, permission)) {
-        throw new ApiError(403, 'Insufficient permissions')
-      }
-
-      return handler(request, user)
-    }
-  }
-}
-
-// Usage - HOF wraps the handler
-export const DELETE = requirePermission('delete')(
-  async (request: Request, user: User) => {
-    // Handler receives authenticated user with verified permission
-    return new Response('Deleted', { status: 200 })
-  }
-)
-```
-
-## Rate Limiting
-
-Rate limiting must use a shared store such as Redis, a gateway, or the
-platform's native limiter. Do not use per-process in-memory counters for
-production APIs: they reset on deploy, split across replicas, and fail open in
-serverless or multi-instance environments.
-
-Keep the backend layer responsible for choosing the integration point and error
-shape; use `api-design` for the HTTP contract and `security-review` for abuse
-case review.
-
-## Background Jobs & Queues
-
-### Simple Queue Pattern
-
-```typescript
-class JobQueue<T> {
-  private queue: T[] = []
-  private processing = false
-
-  async add(job: T): Promise<void> {
-    this.queue.push(job)
-
-    if (!this.processing) {
-      this.process()
-    }
-  }
-
-  private async process(): Promise<void> {
-    this.processing = true
-
-    while (this.queue.length > 0) {
-      const job = this.queue.shift()!
-
-      try {
-        await this.execute(job)
-      } catch (error) {
-        console.error('Job failed:', error)
-      }
-    }
-
-    this.processing = false
-  }
-
-  private async execute(job: T): Promise<void> {
-    // Job execution logic
-  }
-}
-
-// Usage for indexing markets
-interface IndexJob {
-  marketId: string
-}
-
-const indexQueue = new JobQueue<IndexJob>()
-
-export async function POST(request: Request) {
-  const { marketId } = await request.json()
-
-  // Add to queue instead of blocking
-  await indexQueue.add({ marketId })
-
-  return NextResponse.json({ success: true, message: 'Job queued' })
-}
-```
-
-## Logging & Monitoring
-
-### Structured Logging
-
-```typescript
-interface LogContext {
-  userId?: string
-  requestId?: string
-  method?: string
-  path?: string
-  [key: string]: unknown
-}
-
-class Logger {
-  log(level: 'info' | 'warn' | 'error', message: string, context?: LogContext) {
-    const entry = {
-      timestamp: new Date().toISOString(),
-      level,
-      message,
-      ...context
-    }
-
-    console.log(JSON.stringify(entry))
-  }
-
-  info(message: string, context?: LogContext) {
-    this.log('info', message, context)
-  }
-
-  warn(message: string, context?: LogContext) {
-    this.log('warn', message, context)
-  }
-
-  error(message: string, error: Error, context?: LogContext) {
-    this.log('error', message, {
-      ...context,
-      error: error.message,
-      stack: error.stack
-    })
-  }
-}
-
-const logger = new Logger()
-
-// Usage
-export async function GET(request: Request) {
-  const requestId = crypto.randomUUID()
-
-  logger.info('Fetching markets', {
-    requestId,
-    method: 'GET',
-    path: '/api/markets'
-  })
-
-  try {
-    const markets = await fetchMarkets()
-    return NextResponse.json({ success: true, data: markets })
-  } catch (error) {
-    logger.error('Failed to fetch markets', error as Error, { requestId })
-    return NextResponse.json({ error: 'Internal error' }, { status: 500 })
-  }
-}
-```
-
-**Remember**: Backend patterns enable scalable, maintainable server-side applications. Choose patterns that fit your complexity level.
+- [ ] Domain entities have zero dependencies on frameworks, ORMs, or transport libraries.
+- [ ] Business invariants are checked within Entities and Value Objects, not in controllers.
+- [ ] Database access is abstracted behind Repository interfaces (Outbound Ports).
+- [ ] Each database transaction modifies exactly one Aggregate instance.
+- [ ] Cross-boundary communication relies on immutable DTOs and Domain Events.
+- [ ] Input validation (structure/types) occurs in the presentation layer; business validation occurs in the domain.
+- [ ] Composition root is the only location where concrete adapters are wired to use cases.

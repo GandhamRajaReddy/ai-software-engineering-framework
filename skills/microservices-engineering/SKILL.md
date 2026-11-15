@@ -275,3 +275,24 @@ Use the same boundary rules across ecosystems; only syntax and wiring style chan
 - Use cases are testable with simple in-memory fakes for ports.
 - Refactoring starts from one vertical slice with behavior-preserving tests.
 - Language/framework specifics stay in adapters, never in domain rules.
+
+
+## Service Boundaries & Decision Matrix
+
+### When to Stay Monolith vs When to Decompose
+
+Decomposing into microservices introduces substantial operational complexity (distributed tracing, network latency, partial failures, data consistency challenges). Use this objective criteria matrix:
+
+| Factor | Modular Monolith (Preferred) | Microservices (When Justified) |
+|:-------|:----------------------------|:-------------------------------|
+| **Team Size** | < 25 engineers, single cross-functional team | > 30 engineers across 4+ independent squads |
+| **Deployment Cadence** | Monolithic releases 1-5 times daily | Independent squads deploying 20+ times daily |
+| **Data Boundaries** | Relational integrity, shared transactions needed | Clear Domain-Driven Bounded Contexts, eventual consistency acceptable |
+| **Scaling Profile** | Uniform scaling across components | 1 component requires 100x CPU/GPU (e.g. video encoding vs billing) |
+| **Operational Maturity** | Basic monitoring, small DevOps team | Dedicated Platform/SRE team, service mesh, distributed tracing |
+
+### Bounded Context Data Ownership
+
+- **Strict Data Isolation**: No microservice may ever read or write directly to another service's database.
+- **Contract-Based Ingestion**: If Service B needs data from Service A, it consumes domain events published by Service A and maintains its own read-optimized local projection.
+- **AsyncAPI & Protocol Buffers**: Service-to-service contracts must be explicitly versioned with semantic compatibility checks.

@@ -1,167 +1,89 @@
 ---
 name: backend-observability
-description: Backend observability engineering covering structured JSON logging, correlation IDs, OpenTelemetry distributed tracing, Prometheus RED metrics (Rate, Errors, Duration), and Kubernetes liveness/readiness health probes (/healthz, /readyz). Use when implementing logging, metrics, tracing, or health check infrastructure.
+description: Backend observability engineering covering structured JSON logging, correlation IDs, OpenTelemetry tracing, Prometheus RED & USE metrics, SLOs/Error Budgets, multi-window burn-rate alerts, cardinality limits, and incident runbooks. Use when implementing logging, metrics, tracing, alerts, or incident runbooks.
 metadata:
   origin: ASEF
 ---
 
-# Backend Observability & Telemetry
+# Backend Observability & Incident Reliability
 
-Production-grade observability patterns: structured logging, distributed tracing, metrics, and health probes.
+Production-grade observability architecture: structured logging, distributed tracing, metrics, SLO alert design, and incident triage.
 
 ## When to Activate
 
-- Designing structured logging with correlation/trace IDs
-- Instrumenting services with OpenTelemetry (tracing across HTTP and message queues)
-- Exporting Prometheus metrics using the RED method (Rate, Errors, Duration)
-- Implementing `/healthz` (liveness) and `/readyz` (readiness) probe endpoints
-- Debugging distributed latency bottlenecks or intermittent error spikes
+- Instrumenting services with Prometheus RED (Rate, Errors, Duration) and USE (Utilization, Saturation, Errors) metrics
+- Defining Service Level Objectives (SLOs), Service Level Indicators (SLIs), and Error Budgets
+- Implementing multi-window multi-burn-rate alerting rules
+- Preventing metric store crashes by enforcing strict cardinality limits
+- Writing operational incident response runbooks and triage checklists
+- Propagating W3C Trace Context across distributed microservices
 
 ---
 
-## 1. The Three Pillars of Backend Observability
+## 1. RED vs USE Metrics Framework
+
+| Metric Framework | Target | Dimensions Measured | Primary Alert Triggers |
+|:-----------------|:-------|:--------------------|:-----------------------|
+| **RED Method** | Request-driven services (HTTP APIs, RPCs) | **R**ate (req/s), **E**rrors (5xx rate), **D**uration (latency p95/p99) | High 5xx rate, p99 latency breach |
+| **USE Method** | Internal resources (CPUs, DB pools, Disks) | **U**tilization (% busy), **S**aturation (queue length), **E**rrors (hardware/driver faults) | Connection pool saturation > 85%, disk full |
+
+---
+
+## 2. SLOs & Error Budget Math
+
+Never alert on arbitrary CPU thresholds. Alert when the **user experience** is degrading and consuming the service's **Error Budget**.
+
+- **SLI (Service Level Indicator):** Proportion of successful requests:
+  $$\text{SLI} = \frac{\text{Count of HTTP requests with status } < 500 \text{ and latency } \le 200\text{ms}}{\text{Total HTTP requests}}$$
+- **SLO (Service Level Objective):** 99.9% over rolling 30 days.
+- **Error Budget:** $100\% - 99.9\% = 0.1\%$ allowable bad events ($43.8\text{ minutes/month}$).
+
+### Multi-Window Multi-Burn-Rate Alerting Rules (Google SRE Standard)
+
+| Severity | Burn Rate | Budget Consumed | Short Window | Long Window | Action |
+|:---------|:---------:|:---------------:|:------------:|:-----------:|:-------|
+| **P1 - Page** | 14.4x | 2% in 1 hour | 5 minutes | 1 hour | PagerDuty immediately |
+| **P2 - Page** | 6.0x | 5% in 6 hours | 30 minutes | 6 hours | PagerDuty during business hours |
+| **P3 - Ticket** | 1.0x | 10% in 3 days | 2 hours | 3 days | File issue tracker ticket |
+
+---
+
+## 3. High Cardinality Rule (Prometheus Protection)
+
+High cardinality occurs when a metric label contains an unbounded set of distinct values (e.g. user IDs, email addresses, order UUIDs). This causes Prometheus to explode in memory and crash.
+
+```typescript
+// ANTI-PATTERN: Fatal high cardinality in Prometheus
+httpRequestsTotal.labels(req.method, req.path, userId).inc(); // CRASHES PROMETHEUS!
+
+// SECURE PATTERN: Low cardinality bounded labels
+httpRequestsTotal.labels(req.method, req.route.path, res.statusCode).inc();
+// req.route.path is bounded: "/api/v1/orders/:id"
+```
+
+---
+
+## 4. Production Incident Response Runbook
+
+When an alert fires, follow the 4-phase incident triage protocol:
 
 ```text
- ┌───────────────────────┐
- │   Distributed Tracing │ ──► End-to-end request journeys & latency breakdown
- └───────────────────────┘
- ┌───────────────────────┐
- │    Prometheus Metrics │ ──► Aggregate real-time health, alerts & trends (RED)
- └───────────────────────┘
- ┌───────────────────────┐
- │  Structured JSON Logs │ ──► High-cardinality debugging details tied to trace_id
- └───────────────────────┘
-```
-
----
-
-## 2. Structured JSON Logging
-
-Every log entry must be valid JSON to allow parsing by ELK, Datadog, or Grafana Loki. Never output plain text unstructured strings.
-
-### Standard Log Schema
-```json
-{
-  "timestamp": "2026-05-15T14:32:10.123Z",
-  "level": "INFO",
-  "service": "order-service",
-  "environment": "production",
-  "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
-  "span_id": "00f067aa0ba902b7",
-  "message": "Order processed successfully",
-  "order_id": "ord_987123",
-  "duration_ms": 42.5
-}
-```
-
-### Express.js Pino Logger Middleware
-
-```typescript
-import pino from 'pino';
-import pinoHttp from 'pino-http';
-import { v4 as uuidv4 } from 'uuid';
-
-export const logger = pino({
-  level: process.env.LOG_LEVEL || 'info',
-  formatters: {
-    level: (label) => ({ level: label.toUpperCase() })
-  },
-  redact: ['req.headers.authorization', 'req.headers.cookie', 'body.password', 'body.token']
-});
-
-export const httpLogger = pinoHttp({
-  logger,
-  genReqId: (req) => (req.headers['x-request-id'] as string) || uuidv4(),
-  customLogLevel: (req, res, err) => {
-    if (res.statusCode >= 500 || err) return 'error';
-    if (res.statusCode >= 400) return 'warn';
-    return 'info';
-  }
-});
-```
-
----
-
-## 3. Distributed Tracing (OpenTelemetry)
-
-Propagate context across service boundaries using standard W3C `traceparent` headers (`00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01`).
-
-```python
-# FastAPI OpenTelemetry Instrumentation
-from opentelemetry import trace
-from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
-from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanProcessor
-from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
-
-def setup_telemetry(app, engine):
-    provider = TracerProvider()
-    processor = BatchSpanProcessor(OTLPSpanExporter(endpoint="http://otel-collector:4317"))
-    provider.add_span_processor(processor)
-    trace.set_tracer_provider(provider)
-
-    FastAPIInstrumentor.instrument_app(app)
-    SQLAlchemyInstrumentor().instrument(engine=engine.sync_engine)
-```
-
----
-
-## 4. Prometheus Metrics: The RED Method
-
-| Metric | Type | Metric Name | Purpose |
-|--------|------|-------------|---------|
-| **Rate** | Counter | `http_requests_total{method, route, status}` | Requests received per second |
-| **Errors** | Counter | `http_requests_total{status=~"5.."}` | Errors encountered per second |
-| **Duration** | Histogram | `http_request_duration_seconds_bucket{route}` | Request execution latency distribution |
-
-```typescript
-import client from 'prom-client';
-
-client.collectDefaultMetrics({ prefix: 'node_' });
-
-export const httpRequestDuration = new client.Histogram({
-  name: 'http_request_duration_seconds',
-  help: 'Duration of HTTP requests in seconds',
-  labelNames: ['method', 'route', 'status_code'],
-  buckets: [0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0]
-});
-```
-
----
-
-## 5. Health Check Endpoints: Liveness & Readiness
-
-Separate liveness (is process running?) from readiness (can it handle traffic?).
-
-```typescript
-// /healthz (Liveness) — simple process check
-app.get('/healthz', (req, res) => {
-  res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
-});
-
-// /readyz (Readiness) — deep dependency check
-app.get('/readyz', async (req, res) => {
-  try {
-    // 1. Check primary database connection
-    await db.$queryRaw`SELECT 1`;
-
-    // 2. Check Redis cache/broker
-    const ping = await redis.ping();
-    if (ping !== 'PONG') throw new Error('Redis ping failed');
-
-    res.status(200).json({
-      status: 'ready',
-      checks: {
-        database: 'connected',
-        redis: 'connected'
-      }
-    });
-  } catch (err: any) {
-    res.status(503).json({
-      status: 'unhealthy',
-      error: err.message
-    });
-  }
-});
+ ┌──────────────────────────────┐
+ │ 1. ASSESS & CLASSIFY (5 min) │ ──► Determine customer impact & severity (SEV-1 to SEV-3)
+ └──────────────┬───────────────┘
+                │
+                ▼
+ ┌──────────────────────────────┐
+ │ 2. MITIGATE FIRST (10 min)   │ ──► DO NOT DEBUG ROOT CAUSE FIRST. Mitigate immediately:
+ └──────────────┬───────────────┘     Rollback deployment, flip feature flag, scale replicas
+                │
+                ▼
+ ┌──────────────────────────────┐
+ │ 3. INVESTIGATE & RECOVER     │ ──► Trace correlation IDs, inspect error logs, verify health
+ └──────────────┬───────────────┘
+                │
+                ▼
+ ┌──────────────────────────────┐
+ │ 4. BLAMELESS POSTMORTEM      │ ──► Timeline, root cause, preventative action items
+ └──────────────────────────────┘
 ```

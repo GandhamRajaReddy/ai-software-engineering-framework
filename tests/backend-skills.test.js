@@ -7,24 +7,35 @@ const { AgentExecutionAdapter } = require('../cli/agent-execution-adapter');
 const { scanFile } = require('../cli/skillspector-scanner');
 
 const BACKEND_SKILL_DIRS = [
+  'api-contract-testing',
   'api-design-principles',
   'async-background-processing',
   'backend-architecture',
+  'backend-compliance-privacy',
+  'backend-data-integrity',
   'backend-observability',
+  'backend-performance-engineering',
+  'backend-reliability-engineering',
   'backend-security',
   'backend-testing',
   'caching-performance',
+  'cloud-infrastructure-engineering',
   'database-engineering',
   'database-migrations',
+  'distributed-systems-reliability',
   'django-drf-engineering',
+  'event-driven-architecture',
   'fastapi-engineering',
   'golang-backend-engineering',
+  'identity-access-engineering',
   'microservices-engineering',
+  'multi-tenant-saas-engineering',
   'nodejs-backend-engineering',
+  'production-incident-response',
   'springboot-engineering'
 ];
 
-test('Backend Skills: All 15 backend skills exist with valid frontmatter matching directory name', () => {
+test('Backend Skills: All 26 backend & reliability skills exist with valid frontmatter matching directory name', () => {
   const skillsBaseDir = path.join(__dirname, '..', 'skills');
 
   for (const skillName of BACKEND_SKILL_DIRS) {

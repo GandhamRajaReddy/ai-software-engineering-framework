@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ASEF Agent Contract Schema",
+  "type": "object",
+  "required": [
+    "agent_id",
+    "name",
+    "role",
+    "authority_level",
+    "allowed_tools",
+    "sandbox_confinement",
+    "write_permissions",
+    "prohibition_of_self_approval"
+  ],
+  "properties": {
+    "agent_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9_-]+$"
+    },
+    "name": {
+      "type": "string"
+    },
+    "role": {
+      "type": "string"
+    },
+    "specialist_roles": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "authority_level": {
+      "type": "string",
+      "enum": ["architect", "builder", "verifier", "auditor", "orchestrator"]
+    },
+    "allowed_tools": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "sandbox_confinement": {
+      "type": "object",
+      "required": ["shell_free", "root_contained", "stripped_credentials"],
+      "properties": {
+        "shell_free": { "type": "boolean", "const": true },
+        "root_contained": { "type": "boolean", "const": true },
+        "stripped_credentials": { "type": "boolean", "const": true }
+      }
+    },
+    "write_permissions": {
+      "type": "object",
+      "required": ["allowed_directories", "blocked_patterns"],
+      "properties": {
+        "allowed_directories": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "blocked_patterns": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "prohibition_of_self_approval": {
+      "type": "boolean",
+      "const": true
+    }
+  },
+  "additionalProperties": false
+}

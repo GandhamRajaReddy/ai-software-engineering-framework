@@ -506,6 +506,104 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 }
 ```
 
+## Contract Testing, Webhook Security & Idempotency
+
+### OpenAPI 3.1 & Breaking Change Detection
+
+Prevent unexpected client outages by integrating automated contract diff checks into CI:
+
+```yaml
+# .github/workflows/contract-lint.yml
+name: API Contract Diff
+on: [pull_request]
+jobs:
+  lint-openapi:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check Breaking Changes against main branch
+        run: |
+          npx @openapitools/openapi-diff-cli --fail-on-incompatible \
+            https://raw.githubusercontent.com/org/repo/main/openapi.json \
+            ./openapi.json
+```
+
+### Consumer-Driven Contract Testing (Pact Pattern)
+
+Verify producer-consumer expectations independently without brittle end-to-end environments:
+
+```python
+# Producer verification in pytest
+from pact import Verifier
+
+def test_verify_pact_contracts():
+    verifier = Verifier(provider="OrderService", provider_base_url="http://localhost:8000")
+    success, logs = verifier.verify_pacts(
+        "./pacts/consumer-orderservice.json",
+        provider_states_setup_url="http://localhost:8000/_pact/state"
+    )
+    assert success == 0, f"Pact contract verification failed: {logs}"
+```
+
+### HMAC-SHA256 Webhook Signatures & Replay Defense
+
+Every outgoing webhook must be signed using HMAC-SHA256, and receiving endpoints must verify signatures and reject timestamps older than 5 minutes (300s):
+
+```python
+import hmac
+import hashlib
+import time
+
+def generate_webhook_signature(payload_bytes: bytes, secret: str) -> str:
+    timestamp = int(time.time())
+    to_sign = f"t={timestamp}.".encode('utf-8') + payload_bytes
+    sig = hmac.new(secret.encode('utf-8'), to_sign, hashlib.sha256).hexdigest()
+    return f"t={timestamp},v1={sig}"
+
+def verify_webhook_signature(payload_bytes: bytes, header: str, secret: str, max_drift_seconds: int = 300) -> bool:
+    parts = dict(item.split('=') for item in header.split(','))
+    t = int(parts.get('t', 0))
+    v1 = parts.get('v1', '')
+
+    # 1. Verify timestamp drift
+    if abs(time.time() - t) > max_drift_seconds:
+        return False
+
+    # 2. Recompute HMAC and constant-time compare
+    to_sign = f"t={t}.".encode('utf-8') + payload_bytes
+    expected = hmac.new(secret.encode('utf-8'), to_sign, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, v1)
+```
+
+### Distributed Idempotency Key Handling
+
+Idempotent POST endpoints require clients to supply an `Idempotency-Key` header:
+
+```python
+# Fast, atomic Redis idempotency lock and cache
+async def process_idempotent_request(idempotency_key: str, redis_client, handler):
+    lock_key = f"idemp:lock:{idempotency_key}"
+    resp_key = f"idemp:resp:{idempotency_key}"
+
+    # 1. Return cached response if request already completed
+    cached = await redis_client.get(resp_key)
+    if cached:
+        return json.loads(cached)
+
+    # 2. Acquire 30-second processing mutex
+    acquired = await redis_client.set(lock_key, "locked", nx=True, ex=30)
+    if not acquired:
+        raise HTTPException(status_code=409, detail="Concurrent request with same Idempotency-Key is currently in-flight.")
+
+    try:
+        response_data = await handler()
+        # 3. Store result with 24-hour TTL
+        await redis_client.set(resp_key, json.dumps(response_data), ex=86400)
+        return response_data
+    finally:
+        await redis_client.delete(lock_key)
+```
+
 ## API Design Checklist
 
 Before shipping a new endpoint:

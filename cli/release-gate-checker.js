@@ -118,11 +118,23 @@ function evaluateWithOverrides(projectDir, overrides) {
 }
 
 function formatGateReportMarkdown(gateCheckResult) {
-  return gateCheckResult.reportMarkdown || '';
+  if (gateCheckResult && gateCheckResult.reportMarkdown) {
+    return gateCheckResult.reportMarkdown;
+  }
+  let md = `# Release Gate Audit Report\n\n`;
+  md += `> **Score:** ${gateCheckResult.totalScore}/100\n`;
+  md += `> **Verdict:** ${gateCheckResult.verdict}\n\n`;
+  if (gateCheckResult && gateCheckResult.gateResults) {
+    for (const g of gateCheckResult.gateResults) {
+      md += `- [${g.passed ? 'x' : ' '}] **${g.name}** (${g.weight} pts): ${g.evidence}\n`;
+    }
+  }
+  return md;
 }
 
 module.exports = {
   GATES,
   checkReleaseGate,
-  formatGateReportMarkdown
+  formatGateReportMarkdown,
+  formatReleaseGateMarkdown: formatGateReportMarkdown
 };

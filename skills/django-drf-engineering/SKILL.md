@@ -717,6 +717,149 @@ Product.objects.bulk_update(products, ['is_active'])
 Product.objects.filter(stock=0).delete()
 ```
 
+## Production Security, Transactions & Background Jobs
+
+### Object and QuerySet-Level Multi-Tenant Permissions
+
+Enforce tenant isolation both at the QuerySet filter level and the individual object permission level to eliminate unauthorized cross-tenant data access.
+
+```python
+from rest_framework import permissions, viewsets
+from rest_framework.exceptions import PermissionDenied
+
+class IsTenantMember(permissions.BasePermission):
+    """Ensure user belongs to the tenant owning the object."""
+
+    def has_permission(self, request, view):
+        return request.user and request.user.is_authenticated
+
+    def has_object_permission(self, request, view, obj):
+        obj_tenant_id = getattr(obj, 'tenant_id', None)
+        if obj_tenant_id is None and hasattr(obj, 'tenant'):
+            obj_tenant_id = obj.tenant.id
+            
+        if request.user.is_superuser:
+            return True
+            
+        return obj_tenant_id == request.user.tenant_id
+
+class TenantScopedViewSet(viewsets.ModelViewSet):
+    """Base ViewSet enforcing tenant isolation at the QuerySet level."""
+    permission_classes = [permissions.IsAuthenticated, IsTenantMember]
+
+    def get_queryset(self):
+        user = self.request.user
+        if user.is_superuser:
+            return self.queryset.all()
+        return self.queryset.filter(tenant_id=user.tenant_id)
+
+    def perform_create(self, serializer):
+        serializer.save(tenant=self.request.user.tenant)
+```
+
+### Strict Transaction Boundaries with select_for_update
+
+Prevent race conditions and double-spending by taking row-level exclusive locks inside atomic transactions. Always sort IDs when locking multiple records to avoid deadlocks.
+
+```python
+from decimal import Decimal
+from django.db import transaction
+from rest_framework.exceptions import ValidationError
+
+class WalletService:
+    @staticmethod
+    def transfer_balance(sender_id: int, recipient_id: int, amount: Decimal) -> None:
+        if amount <= 0:
+            raise ValidationError("Transfer amount must be positive.")
+
+        # Always order lock acquisitions by primary key to prevent deadlocks
+        ids = sorted([sender_id, recipient_id])
+
+        with transaction.atomic():
+            wallets = {
+                w.id: w 
+                for w in Wallet.objects.select_for_update().filter(id__in=ids)
+            }
+            
+            sender_wallet = wallets.get(sender_id)
+            recipient_wallet = wallets.get(recipient_id)
+
+            if not sender_wallet or not recipient_wallet:
+                raise ValidationError("Wallet not found.")
+
+            if sender_wallet.balance < amount:
+                raise ValidationError("Insufficient balance.")
+
+            sender_wallet.balance -= amount
+            recipient_wallet.balance += amount
+
+            sender_wallet.save(update_fields=['balance', 'updated_at'])
+            recipient_wallet.save(update_fields=['balance', 'updated_at'])
+
+            LedgerEntry.objects.create(
+                sender=sender_wallet,
+                recipient=recipient_wallet,
+                amount=amount,
+            )
+```
+
+### Safe Async Task Dispatch with transaction.on_commit
+
+Never trigger Celery or background tasks before the database transaction has committed. If the worker executes before the transaction commits, it reads uncommitted or stale data.
+
+```python
+from django.db import transaction
+from .tasks import send_order_confirmation_email, process_payment_webhook
+
+def finalize_checkout(order_id: int) -> Order:
+    with transaction.atomic():
+        order = Order.objects.select_for_update().get(id=order_id)
+        order.status = OrderStatus.PAID
+        order.save(update_fields=['status', 'updated_at'])
+
+        # Register hook to dispatch Celery task ONLY when transaction commits
+        transaction.on_commit(lambda: send_order_confirmation_email.delay(order.id))
+        transaction.on_commit(lambda: process_payment_webhook.delay(order.id))
+
+    return order
+```
+
+### Production File Upload Security
+
+Prevent malicious file uploads through MIME type verification, file size limits, name sanitization, and decoupled object storage.
+
+```python
+import os
+import uuid
+import magic
+from django.core.exceptions import ValidationError
+from django.utils.deconstruct import deconstructible
+
+ALLOWED_MIME_TYPES = {'image/jpeg', 'image/png', 'image/webp', 'application/pdf'}
+MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # 10 MB
+
+def validate_file_safety(uploaded_file):
+    if uploaded_file.size > MAX_UPLOAD_SIZE:
+        raise ValidationError("File size exceeds maximum allowable limit (10MB).")
+
+    # Inspect first 2048 bytes for true magic MIME bytes (never trust extension)
+    initial_bytes = uploaded_file.read(2048)
+    uploaded_file.seek(0)
+    mime = magic.from_buffer(initial_bytes, mime=True)
+    if mime not in ALLOWED_MIME_TYPES:
+        raise ValidationError("Unsupported file type: " + str(mime))
+
+@deconstructible
+class SecureUploadPath:
+    def __init__(self, sub_dir='uploads'):
+        self.sub_dir = sub_dir
+
+    def __call__(self, instance, filename):
+        ext = os.path.splitext(filename)[1].lower()
+        unique_name = f"{uuid.uuid4().hex}{ext}"
+        return os.path.join(self.sub_dir, unique_name)
+```
+
 ## Quick Reference
 
 | Pattern | Description |

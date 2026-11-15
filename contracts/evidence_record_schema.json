@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ASEF Evidence Record Schema",
+  "type": "object",
+  "required": [
+    "id",
+    "type",
+    "timestamp",
+    "sourceTreeHash",
+    "isMock",
+    "provenance",
+    "data"
+  ],
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "type": {
+      "type": "string",
+      "enum": ["test-suite", "security-audit", "stage-execution", "release-decision"]
+    },
+    "timestamp": {
+      "type": "string"
+    },
+    "sourceTreeHash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "isMock": {
+      "type": "boolean"
+    },
+    "provenance": {
+      "type": "object",
+      "required": ["agent", "backend"],
+      "properties": {
+        "agent": { "type": "string" },
+        "backend": { "type": "string" },
+        "gitCommit": { "type": ["string", "null"] },
+        "loadedSkills": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "data": {
+      "type": "object"
+    }
+  },
+  "additionalProperties": false
+}

@@ -504,6 +504,67 @@ async def list_items(db: AsyncSession = Depends(get_db)):
 
 ---
 
+## Production Reliability & Concurrency Patterns
+
+### 1. Row-Level Locking with `with_for_update()`
+Prevent race conditions during balance deductions or inventory updates:
+
+```python
+async def transfer_balance(db: AsyncSession, from_id: str, to_id: str, amount: Decimal):
+    async with db.begin():
+        # Lock both rows deterministically (sorted order to prevent deadlocks)
+        ids = sorted([from_id, to_id])
+        stmt = (
+            select(Account)
+            .where(Account.id.in_(ids))
+            .with_for_update()
+            .order_by(Account.id)
+        )
+        accounts = {a.id: a for a in (await db.execute(stmt)).scalars().all()}
+        
+        if accounts[from_id].balance < amount:
+            raise InsufficientFundsError()
+            
+        accounts[from_id].balance -= amount
+        accounts[to_id].balance += amount
+```
+
+### 2. Async Cancellation & Task Disconnect Handling
+When an HTTP client aborts or disconnects, FastAPI raises `asyncio.CancelledError`. Critical transactions must clean up properly:
+
+```python
+import asyncio
+from fastapi import Request
+
+@router.post("/process-long-task")
+async def process_task(request: Request, db: AsyncSession = Depends(get_db)):
+    try:
+        # Check client connection state
+        if await request.is_disconnected():
+            return
+        await heavy_computation()
+    except asyncio.CancelledError:
+        # Client aborted connection: log and rollback safely
+        logger.warn("Client disconnected mid-request; releasing resources")
+        await db.rollback()
+        raise  # Re-raise to allow Starlette event loop to clean up
+```
+
+### 3. Production Deployment Topology
+```bash
+# Gunicorn master supervisor with Uvicorn workers (CPU Core Count * 2 + 1)
+exec gunicorn app.main:app \
+  --workers 4 \
+  --worker-class uvicorn.workers.UvicornWorker \
+  --bind 0.0.0.0:8000 \
+  --timeout 120 \
+  --keep-alive 5 \
+  --access-logfile - \
+  --error-logfile -
+```
+
+---
+
 ## Best Practices
 
 - Always declare a typed `response_model` to prevent accidental PII/data leaks and output clean OpenAPI schemas.

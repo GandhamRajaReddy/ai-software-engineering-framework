@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ASEF Agent Handoff Schema",
+  "type": "object",
+  "required": [
+    "handoff_id",
+    "timestamp",
+    "from_stage",
+    "to_stage",
+    "from_agent",
+    "to_agent",
+    "artifacts_produced",
+    "source_tree_hash",
+    "gate_status"
+  ],
+  "properties": {
+    "handoff_id": {
+      "type": "string"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "from_stage": {
+      "type": "string",
+      "pattern": "^[0-9]{2}$"
+    },
+    "to_stage": {
+      "type": "string",
+      "pattern": "^[0-9]{2}$"
+    },
+    "from_agent": {
+      "type": "string"
+    },
+    "to_agent": {
+      "type": "string"
+    },
+    "artifacts_produced": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "source_tree_hash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "gate_status": {
+      "type": "string",
+      "enum": ["PASSED", "FAILED", "BLOCKED"]
+    },
+    "context_summary": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": false
+}

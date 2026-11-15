@@ -1,11 +1,11 @@
 ---
 name: database-engineering
-description: Production database engineering covering PostgreSQL, MySQL, and MongoDB. Schema design, normalization, indexing strategies (B-Tree, GIN, BRIN, compound ESR rule), transaction isolation, deadlocks, connection pool tuning, and query optimization. Use when designing schemas, tuning queries, or choosing database patterns.
+description: Production database engineering covering PostgreSQL, MySQL, and MongoDB. Schema design, normalization, indexing strategies, ANSI SQL isolation levels, MVCC concurrency, deadlock handling, replication lag mitigation, connection pool sizing, and backup restore drills. Use when designing schemas, tuning queries, or configuring database reliability.
 metadata:
   origin: ASEF
 ---
 
-# Database Engineering Patterns & Practices
+# Database Engineering Patterns & Production Reliability
 
 Production-grade database patterns for relational (PostgreSQL, MySQL) and document (MongoDB) databases.
 
@@ -13,10 +13,11 @@ Production-grade database patterns for relational (PostgreSQL, MySQL) and docume
 
 - Designing relational schemas or NoSQL document models
 - Indexing query paths (compound indexes, partial indexes, covering indexes)
-- Selecting primary keys (UUIDv7 vs ULID vs BigInt Auto-increment)
+- Selecting transaction isolation levels (Read Committed, Repeatable Read, Serializable)
 - Troubleshooting slow queries, lock contention, or transaction deadlocks
-- Sizing and configuring database connection pools
-- Handling concurrency with optimistic locking or `SELECT ... FOR UPDATE`
+- Sizing and configuring database connection pools (PgBouncer, HikariCP)
+- Mitigating read replica lag with read-your-own-writes sticky routing
+- Establishing automated backup verification and disaster restore drills
 
 ---
 
@@ -44,107 +45,55 @@ $$\text{Max Connections} = (\text{Core Count} \times 2) + \text{Effective Spindl
 
 ---
 
-## 2. PostgreSQL Patterns
+## 2. ANSI SQL Isolation Levels & MVCC Concurrency
 
-### Schema & Data Types
+| Isolation Level | Dirty Read | Non-Repeatable Read | Phantom Read | Serialization Anomaly / Write Skew | Use Case |
+|:----------------|:----------:|:-------------------:|:------------:|:----------------------------------:|:---------|
+| **Read Committed** (Default in PG/MySQL) | Prevented | Allowed | Allowed | Allowed | Standard CRUD, web reads/writes |
+| **Repeatable Read** | Prevented | Prevented | Prevented (PG MVCC) | Allowed (Write Skew possible) | End-of-month reporting, analytics snapshots |
+| **Serializable** | Prevented | Prevented | Prevented | Prevented | Financial ledgers, double-spend prevention |
 
-| Use Case | Correct Type | Avoid | Reason |
-|----------|-------------|-------|--------|
-| Primary Key | `bigint GENERATED ALWAYS AS IDENTITY` or `uuid` (v7) | `serial`, `varchar` | Identity is SQL standard; avoids sequence drift |
-| Strings | `text` | `varchar(255)` | In Postgres, `text` and `varchar` have identical storage |
-| Timestamps | `timestamptz` | `timestamp` | `timestamptz` preserves absolute UTC instant |
-| Monies / Quantities | `numeric(12, 4)` | `float`, `double` | Floats suffer IEEE-754 precision errors |
-| Semi-Structured Data | `jsonb` | `json`, `text` | `jsonb` stores parsed binary format, supports indexing |
-
-### Index Strategy
+### Write Skew Anomaly Example (Why Repeatable Read is Not Enough)
+If two doctors concurrently check if at least one doctor remains on call and both take off, both transactions pass under Repeatable Read, leaving zero doctors on call. **Serializable** or explicit row locking (`SELECT ... FOR UPDATE`) is required:
 
 ```sql
--- Equality first, then range/sort
-CREATE INDEX idx_orders_customer_created ON orders (customer_id, created_at DESC);
-
--- Covering Index (Index-Only Scan)
-CREATE INDEX idx_users_email_covering ON users (email) INCLUDE (first_name, last_name, role);
-
--- Partial Index (Zero overhead for inactive data)
-CREATE INDEX idx_active_subscriptions ON subscriptions (user_id) WHERE status = 'active';
-
--- GIN Index for JSONB Search
-CREATE INDEX idx_audit_metadata_gin ON audit_logs USING gin (metadata jsonb_path_ops);
-```
-
-### Keyset Pagination (O(1) vs O(N) OFFSET)
-
-```sql
--- DO NOT USE: OFFSET 100000 LIMIT 20 (scans and discards 100,000 rows)
--- USE KEYSET:
-SELECT id, total_amount, created_at
-FROM orders
-WHERE (created_at, id) < ('2026-05-01T12:00:00Z', 48920)
-ORDER BY created_at DESC, id DESC
-LIMIT 20;
-```
-
-### Queue Processing with SKIP LOCKED
-
-```sql
-UPDATE tasks
-SET status = 'processing', locked_at = NOW(), worker_id = 'worker-1'
-WHERE id = (
-    SELECT id FROM tasks
-    WHERE status = 'pending' AND scheduled_at <= NOW()
-    ORDER BY priority DESC, id ASC
-    LIMIT 1
-    FOR UPDATE SKIP LOCKED
-)
-RETURNING *;
+-- Explicit locking under Read Committed
+BEGIN;
+SELECT count(*) FROM on_call_doctors WHERE active = true FOR UPDATE;
+-- Safe to update now
+UPDATE on_call_doctors SET active = false WHERE doctor_id = 'doc-1';
+COMMIT;
 ```
 
 ---
 
-## 3. MySQL / InnoDB Patterns
+## 3. Deadlock Handling & Retry Loops
 
-### InnoDB Clustered Index Rules
-
-In InnoDB, table rows are physically stored in the B-Tree of the Primary Key.
-1. **Always declare an explicit Primary Key**: Without one, InnoDB generates an implicit 6-byte hidden row ID (`DB_ROW_ID`), serialized across all tables.
-2. **Keep Secondary Indexes narrow**: Secondary indexes store the Primary Key value as their row pointer. Large composite primary keys bloat every secondary index.
-
-### Collation and Defaults
-
-```sql
-CREATE TABLE accounts (
-    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-    account_uuid BINARY(16) NOT NULL,
-    organization_id BIGINT UNSIGNED NOT NULL,
-    slug VARCHAR(64) NOT NULL,
-    balance DECIMAL(15, 4) NOT NULL DEFAULT 0.0000,
-    is_active TINYINT(1) NOT NULL DEFAULT 1,
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    deleted_at DATETIME NULL,
-    PRIMARY KEY (id),
-    UNIQUE KEY uq_org_slug (organization_id, slug),
-    KEY idx_org_active (organization_id, is_active, created_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
-```
-
-### Deadlock Handling & Retries
-
-In MySQL, concurrent transactions updating rows in opposite order will deadlock (`ER_LOCK_DEADLOCK` / Error 1213).
-Applications must wrap write transactions in an exponential backoff retry loop:
+When two concurrent transactions update rows in opposite order (Tx1: Row A then Row B; Tx2: Row B then Row A), the engine detects a cycle and aborts one transaction with an error (`40P01` in Postgres, `1213` in MySQL).
 
 ```typescript
-async function executeWithRetry<T>(fn: () => Promise<T>, maxRetries = 3): Promise<T> {
+// Resilient Transaction Retry with Full Jitter
+export async function withTransactionRetry<T>(
+  operation: () => Promise<T>,
+  maxAttempts = 3
+): Promise<T> {
   let attempt = 0;
   while (true) {
     try {
-      return await fn();
+      return await operation();
     } catch (err: any) {
-      const isDeadlock = err.code === 'ER_LOCK_DEADLOCK' || err.errno === 1213;
-      if (isDeadlock && attempt < maxRetries) {
-        attempt++;
-        const jitter = Math.floor(Math.random() * 50);
-        await new Promise(r => setTimeout(r, (2 ** attempt * 50) + jitter));
+      attempt++;
+      const isDeadlock =
+        err.code === '40P01' || // PostgreSQL deadlock_detected
+        err.code === '40001' || // PostgreSQL serialization_failure
+        err.code === 'ER_LOCK_DEADLOCK' || // MySQL
+        err.errno === 1213;
+
+      if (isDeadlock && attempt < maxAttempts) {
+        // Exponential backoff with full jitter (e.g., 50ms, 100ms, 200ms + random jitter)
+        const baseDelay = 50 * Math.pow(2, attempt);
+        const jitter = Math.floor(Math.random() * baseDelay);
+        await new Promise((r) => setTimeout(r, baseDelay + jitter));
         continue;
       }
       throw err;
@@ -155,39 +104,32 @@ async function executeWithRetry<T>(fn: () => Promise<T>, maxRetries = 3): Promis
 
 ---
 
-## 4. MongoDB & Document Store Patterns
+## 4. Replication Lag Mitigation (Read-Your-Own-Writes)
 
-### Embedding vs Referencing Rules
+Asynchronous read replicas suffer replication lag (typically 10ms to several seconds). If a user creates a record and is immediately redirected to view it, reading from a lagging replica returns 404.
 
-| Relationship | Ratio | Strategy | Rationale |
-|--------------|-------|----------|-----------|
-| User Profile + Address | 1:1 or 1:Few (fixed) | **Embed** | Retrieved together in a single atomic read/write |
-| Order + Line Items | 1:10-50 (bounded) | **Embed** | Line items must freeze prices at purchase time |
-| Product + Reviews | 1:Many (unbounded) | **Reference** (or Bucket) | Prevents hitting 16MB document size limit |
-| Log Events / Sensor Readings | 1:Squillions | **Bucket Pattern** | Group by hour/day in time-series collections |
+### Primary Sticky Window Pattern
+After any mutation (POST/PUT/PATCH/DELETE), set a short-lived cookie or header instructing the gateway to route all reads for that user to the **Primary** database for 5 seconds:
 
-### Compound Index ESR Rule (Equality, Sort, Range)
+```typescript
+// Middleware example:
+const userLastWriteTime = await redis.get(`last_write:${userId}`);
+const isWithinLagWindow = userLastWriteTime && (Date.now() - parseInt(userLastWriteTime, 10)) < 5000;
 
-When indexing MongoDB queries containing equality, sorting, and range criteria:
-1. **E**quality: Fields filtered by exact match (`{ status: "active", orgId: "123" }`)
-2. **S**ort: Field used for ordering (`.sort({ createdAt: -1 })`)
-3. **R**ange: Fields filtered by range/inequality (`{ price: { $gte: 10, $lte: 100 } }`)
-
-```javascript
-// Query:
-db.orders.find({ orgId: "org_1", status: "completed", total: { $gte: 50 } })
-         .sort({ createdAt: -1 });
-
-// Correct ESR Index:
-db.orders.createIndex({
-  orgId: 1,       // Equality
-  status: 1,      // Equality
-  createdAt: -1,  // Sort
-  total: 1        // Range
-});
+const dbConnection = isWithinLagWindow || req.method !== 'GET'
+  ? primaryDbPool
+  : readReplicaPool;
 ```
 
-### Write Concerns & Consistency
+---
 
-- **`{ w: "majority", j: true }`**: Production standard for financial or critical data. Acknowledged only after written to majority of replica nodes and written to on-disk journal.
-- **Transactions (`withTransaction`)**: Use multi-document ACID transactions only when updating multiple separate collections atomically; avoid overusing when single-document embedded mutations suffice.
+## 5. Automated Backup Verification & Restore Drills
+
+Having backups is meaningless without proving they can be successfully restored.
+
+### SRE Backup Invariants
+1. **Automated Verification:** Run a weekly scheduled CI/CD job that pulls the latest backup, restores it into an isolated ephemeral test container, runs schema migrations, and asserts data integrity.
+2. **Checksum Verification:** Every backup file (`.sql.gz`, WAL archive) must store an accompanying SHA-256 checksum file.
+3. **RPO / RTO Objectives:**
+   - **RPO (Recovery Point Objective):** Max data loss window $\le 5$ minutes (achieved via WAL streaming).
+   - **RTO (Recovery Time Objective):** Max downtime to full restore $\le 30$ minutes.

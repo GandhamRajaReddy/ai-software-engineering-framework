@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ASEF Task Definition Schema",
+  "type": "object",
+  "required": [
+    "task_id",
+    "stage",
+    "title",
+    "assigned_agent",
+    "dependencies",
+    "target_files",
+    "required_inputs",
+    "expected_artifacts"
+  ],
+  "properties": {
+    "task_id": {
+      "type": "string",
+      "pattern": "^[A-Z0-9_-]+$"
+    },
+    "stage": {
+      "type": "string",
+      "pattern": "^[0-9]{2}$"
+    },
+    "title": {
+      "type": "string"
+    },
+    "description": {
+      "type": "string"
+    },
+    "assigned_agent": {
+      "type": "string"
+    },
+    "dependencies": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "target_files": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "required_inputs": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "expected_artifacts": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "token_budget": {
+      "type": "integer",
+      "minimum": 500,
+      "maximum": 16000
+    }
+  },
+  "additionalProperties": false
+}
