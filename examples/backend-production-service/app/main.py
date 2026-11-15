@@ -17,13 +17,25 @@ logger = logging.getLogger("app.main")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("Initializing database schemas...")
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    # In development/test environments, initialize tables if not managed by migration runner
+    if engine:
+        if settings.ENVIRONMENT in ["development", "test"]:
+            logger.info("Dev/Test mode: Verifying database tables...")
+            try:
+                async with engine.begin() as conn:
+                    await conn.run_sync(Base.metadata.create_all)
+            except Exception as exc:
+                logger.warning(f"Database table verification skipped or driver missing: {exc}")
+        else:
+            logger.info("Production mode: Schema must be applied via Alembic migrations.")
+    else:
+        logger.warning("Database engine not initialized (missing driver or config).")
+        
     logger.info("Service initialized successfully.")
     yield
     logger.info("Shutting down service...")
-    await engine.dispose()
+    if engine:
+        await engine.dispose()
     logger.info("Service connections cleanly disposed.")
 
 app = FastAPI(
@@ -33,25 +45,39 @@ app = FastAPI(
     openapi_url="/openapi.json"
 )
 
+# CORS: Enforce explicit origins; never wildcard with credentials
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Request-ID", "X-Tenant-ID", "traceparent"],
 )
 
 @app.middleware("http")
 async def request_logging_middleware(request: Request, call_next):
-    request_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
+    # W3C Trace Context & Request ID extraction
+    request_id = request.headers.get("X-Request-ID")
+    if not request_id or len(request_id) > 64:
+        request_id = str(uuid.uuid4())
+
+    traceparent = request.headers.get("traceparent", "")
+    trace_id = None
+    if traceparent.startswith("00-") and len(traceparent.split("-")) >= 3:
+        trace_id = traceparent.split("-")[1]
+
     start_time = time.time()
     response: Response = await call_next(request)
     duration_ms = (time.time() - start_time) * 1000
+
     response.headers["X-Request-ID"] = request_id
     response.headers["X-Response-Time"] = f"{duration_ms:.2f}ms"
+    if trace_id:
+        response.headers["X-Trace-ID"] = trace_id
+
     logger.info(
         f"{request.method} {request.url.path} -> {response.status_code} ({duration_ms:.2f}ms)",
-        extra={"request_id": request_id}
+        extra={"request_id": request_id, "trace_id": trace_id}
     )
     return response
 
@@ -69,10 +95,17 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 @app.get("/healthz", tags=["observability"])
 async def liveness_probe():
+    """Liveness probe: verifies process is alive."""
     return {"status": "ok"}
 
 @app.get("/readyz", tags=["observability"])
 async def readiness_probe():
+    """Readiness probe: verifies database connection is ready to accept traffic."""
+    if not engine:
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={"status": "unavailable", "database": "disconnected", "error": "Database engine not initialized"}
+        )
     try:
         async with engine.connect() as conn:
             await conn.execute(text("SELECT 1"))

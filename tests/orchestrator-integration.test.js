@@ -4,8 +4,10 @@ const fs = require('fs');
 const path = require('path');
 
 const { AntiHallucinationEnforcer } = require('../anti_hallucination/runtime_enforcement');
-const { ProviderManager } = require('../resources/provider_management');
-const { EvidenceRegistry } = require('../cli/evidence-registry');
+const { ProviderManager, TokenBucket } = require('../resources/provider_management');
+const { ManifestSigner } = require('../cli/manifest-signer');
+const { SchemaValidator } = require('../cli/schema-validator');
+const { OrchestrationEngine } = require('../cli/orchestration-engine');
 const { evaluateReleasePolicy } = require('../cli/release-policy-engine');
 
 test('Anti-Hallucination: Enforces physical filesystem grounding (Law 1)', () => {
@@ -27,6 +29,14 @@ test('Anti-Hallucination: Enforces physical filesystem grounding (Law 1)', () =>
   ]);
   assert.strictEqual(invalidCheck.valid, false);
   assert.deepStrictEqual(invalidCheck.missingPaths, ['non_existent_folder/imaginary_file.js']);
+
+  // Path traversal escape must be detected and blocked
+  const escapeCheck = AntiHallucinationEnforcer.verifyFilesystemGrounding(root, [
+    '../../etc/passwd',
+    '../unrelated_file.txt'
+  ]);
+  assert.strictEqual(escapeCheck.valid, false);
+  assert.match(escapeCheck.reason, /containment violation/i);
 });
 
 test('Anti-Hallucination: Blocks speculative language and enforces exit code 0 (Law 2)', () => {
@@ -46,10 +56,20 @@ test('Anti-Hallucination: Blocks speculative language and enforces exit code 0 (
   assert.strictEqual(failedRun.valid, false);
   assert.match(failedRun.reason, /failed with exit code 1/);
 
+  // Simulated mock evidence must be quarantined
+  const mockRun = AntiHallucinationEnforcer.auditVerificationInvariant(
+    'Verification tests executed',
+    { exitCode: 0, stdout: 'ok' },
+    { isMock: true, stale: false }
+  );
+  assert.strictEqual(mockRun.valid, false);
+  assert.match(mockRun.reason, /simulated\/mock mode/i);
+
   // Legitimate verifiable claim with exit code 0 must pass
   const verifiedRun = AntiHallucinationEnforcer.auditVerificationInvariant(
     'Executed pytest suite on user endpoints: 42 passed in 1.2s',
-    { exitCode: 0, stdout: '42 passed in 1.2s' }
+    { exitCode: 0, stdout: '42 passed in 1.2s' },
+    { isMock: false, stale: false }
   );
   assert.strictEqual(verifiedRun.valid, true);
 });
@@ -89,39 +109,177 @@ test('Anti-Hallucination: Enforces scope ceilings and prevents placeholder trunc
   assert.strictEqual(completeCheck.valid, true);
 });
 
-test('Provider Management: Manages rate limit cooldowns and health evaluation', async () => {
-  const pm = new ProviderManager({ cooldownMs: 100 });
+test('Cryptographic Manifest Signer: Signs, verifies, and detects tampering with Ed25519', () => {
+  const keyPair = ManifestSigner.generateKeyPair();
+  const sourceTreeHash = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
 
-  assert.strictEqual(pm.isProviderAvailable('groq'), true);
+  const payload = {
+    evidenceRecordIds: ['EVI-123', 'EVI-456'],
+    gitCommit: 'abc1234',
+    releaseVersion: '1.2.0',
+    sourceTreeHash
+  };
 
-  // Record rate limit -> provider enters cooldown
-  pm.recordRateLimit('groq');
-  assert.strictEqual(pm.isProviderAvailable('groq'), false);
+  // Sign payload
+  const signed = ManifestSigner.signPayload(payload, keyPair.privateKey);
+  assert.strictEqual(signed.algorithm, 'Ed25519');
+  assert.ok(signed.signature.length > 30);
 
-  const fallback = pm.selectHealthyProvider(['groq', 'google-gemini']);
-  assert.strictEqual(fallback, 'google-gemini');
+  const markdownBlock = ManifestSigner.formatSignatureBlock(signed, keyPair.publicKey);
+  const fullManifest = `# Release Manifest\n\nStatus: APPROVED\n` + markdownBlock;
 
-  // After cooldown expires
-  await new Promise(r => setTimeout(r, 120));
-  assert.strictEqual(pm.isProviderAvailable('groq'), true);
+  // 1. Valid signature verifies successfully
+  const verifyResult = ManifestSigner.verifyManifest(fullManifest, sourceTreeHash);
+  assert.strictEqual(verifyResult.valid, true);
+  assert.strictEqual(verifyResult.sourceTreeHash, sourceTreeHash);
+
+  // 2. Mismatched sourceTreeHash is rejected
+  const mismatchResult = ManifestSigner.verifyManifest(fullManifest, 'different_hash_123456');
+  assert.strictEqual(mismatchResult.valid, false);
+  assert.match(mismatchResult.reason, /binding mismatch/i);
+
+  // 3. Tampered signature bytes are rejected
+  const tamperedManifest = fullManifest.replace(/Signature: [A-Za-z0-9+/=]+/, 'Signature: AAAAInvalidSignatureBBBB');
+  const tamperedResult = ManifestSigner.verifyManifest(tamperedManifest, sourceTreeHash);
+  assert.strictEqual(tamperedResult.valid, false);
+  assert.match(tamperedResult.reason, /mathematically invalid|tampering/i);
+
+  // 4. Manifest without signature block is rejected
+  const rawManifest = `# Release Manifest\n\nTextual claim only: Signed by Orchestrator`;
+  const noSigResult = ManifestSigner.verifyManifest(rawManifest, sourceTreeHash);
+  assert.strictEqual(noSigResult.valid, false);
+  assert.match(noSigResult.reason, /Missing cryptographic signature block/);
 });
 
-test('Contracts: All JSON Schemas are valid and parseable', () => {
-  const contractsDir = path.join(__dirname, '..', 'contracts');
-  const schemaFiles = [
-    'agent_contract_schema.json',
-    'task_definition_schema.json',
-    'agent_handoff_schema.json',
-    'evidence_record_schema.json',
-    'release_decision_schema.json'
+test('Provider Management: Token bucket rate limiting, jittered backoff, and capability validation', async () => {
+  const pm = new ProviderManager({ baseCooldownMs: 20, maxCooldownMs: 200 });
+
+  // 1. TokenBucket consumption
+  const bucket = new TokenBucket(5, 10);
+  assert.strictEqual(bucket.tryConsume(3), true);
+  assert.strictEqual(bucket.tryConsume(2), true);
+  assert.strictEqual(bucket.tryConsume(1), false); // Saturated
+
+  // 2. Strict capability validation
+  const providerWithCaps = { id: 'p1', capabilities: ['json_mode', 'tools'] };
+  assert.strictEqual(pm.validateCapabilities(providerWithCaps, ['json_mode']), true);
+  assert.strictEqual(pm.validateCapabilities(providerWithCaps, ['vision']), false);
+
+  // Missing capabilities metadata strictly returns false
+  const providerNoCaps = { id: 'p2' };
+  assert.strictEqual(pm.validateCapabilities(providerNoCaps, ['json_mode']), false);
+
+  // 3. Jittered rate limit backoff
+  const delay = pm.recordRateLimit('p1');
+  assert.ok(delay >= 20 && delay <= 200);
+  assert.strictEqual(pm.isProviderAvailable('p1'), false);
+
+  // Success resets failures
+  pm.recordSuccess('p1');
+  assert.strictEqual(pm.isProviderAvailable('p1'), true);
+});
+
+test('Schema Validator: Validates runtime records against formal JSON schemas', () => {
+  const validator = new SchemaValidator();
+
+  // 1. Task Definition Schema
+  const validTask = {
+    task_id: 'TASK-001',
+    stage: '04',
+    title: 'Implement Auth Handler',
+    assigned_agent: 'senior_builder',
+    dependencies: [],
+    target_files: ['src/auth.js'],
+    required_inputs: ['03_implementation_plan.md'],
+    expected_artifacts: ['04_patch_contract.md']
+  };
+  const taskRes = validator.validate(validTask, 'task_definition_schema.json');
+  assert.strictEqual(taskRes.valid, true);
+
+  // Invalid task (missing target_files)
+  const invalidTask = { task_id: 'TASK-002', stage: '04', title: 'Broken' };
+  const badTaskRes = validator.validate(invalidTask, 'task_definition_schema.json');
+  assert.strictEqual(badTaskRes.valid, false);
+
+  // 2. Agent Handoff Schema
+  const validHandoff = {
+    handoff_id: 'HO-100',
+    timestamp: '2026-11-15T12:00:00Z',
+    from_stage: '03',
+    to_stage: '04',
+    from_agent: 'task_planner',
+    to_agent: 'senior_builder',
+    artifacts_produced: ['03_implementation_plan.md'],
+    source_tree_hash: 'a'.repeat(64),
+    gate_status: 'PASSED'
+  };
+  const handoffRes = validator.validate(validHandoff, 'agent_handoff_schema.json');
+  assert.strictEqual(handoffRes.valid, true);
+
+  // 3. Evidence Record Schema
+  const validEvidence = {
+    id: 'EVI-001',
+    type: 'TEST_EXECUTION',
+    timestamp: '2026-11-15T12:00:00Z',
+    sourceTreeHash: 'b'.repeat(64),
+    isMock: false,
+    provenance: {
+      agent: 'test_lead',
+      backend: 'native'
+    },
+    data: {
+      exitCode: 0,
+      command: 'pytest'
+    }
+  };
+  const evidenceRes = validator.validate(validEvidence, 'evidence_record_schema.json');
+  assert.strictEqual(evidenceRes.valid, true);
+});
+
+test('Orchestration Engine: Task DAG Execution with file locks and dual control enforcement', async () => {
+  const root = path.join(__dirname, '..');
+  const engine = new OrchestrationEngine(root);
+
+  // Task DAG execution with independent tasks
+  const tasks = [
+    {
+      task_id: 'TASK-A',
+      title: 'Database Schema Migration',
+      dependencies: [],
+      target_files: ['src/models.js'],
+      assignedAgent: 'System Architect',
+      execute: async () => ({ status: 'success', file: 'models.js' })
+    },
+    {
+      task_id: 'TASK-B',
+      title: 'API Endpoint Router',
+      dependencies: ['TASK-A'],
+      target_files: ['src/routes.js'],
+      assignedAgent: 'System Architect',
+      execute: async () => ({ status: 'success', file: 'routes.js' })
+    }
   ];
 
-  for (const file of schemaFiles) {
-    const filePath = path.join(contractsDir, file);
-    assert.ok(fs.existsSync(filePath), `Missing contract schema: ${file}`);
-    const raw = fs.readFileSync(filePath, 'utf8');
-    const parsed = JSON.parse(raw);
-    assert.strictEqual(parsed.type, 'object', `${file} must be an object schema`);
-    assert.ok(Array.isArray(parsed.required), `${file} must specify required fields`);
-  }
+  const dagResult = await engine.executeStageWithDag(2, tasks);
+  assert.strictEqual(dagResult.totalTasks, 2);
+  assert.strictEqual(dagResult.executedBatches, 2);
+  assert.strictEqual(dagResult.results.length, 2);
+
+  // Dual Control Rule: Builder attempting to act as verifier in Stage 05 must throw
+  const verificationTask = [
+    {
+      task_id: 'TASK-VERIFY-SELF',
+      title: 'Self Verification Attempt',
+      dependencies: [],
+      target_files: [],
+      assignedAgent: 'Senior Builder'
+    }
+  ];
+
+  await assert.rejects(
+    async () => {
+      await engine.executeStageWithDag(5, verificationTask, { authorAgent: 'Senior Builder' });
+    },
+    /Dual control violation/
+  );
 });

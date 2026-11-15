@@ -8,12 +8,14 @@
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const { ProviderManager } = require('../resources/provider_management');
 
 class ProviderExecutionManager {
   constructor(options = {}) {
     this.requestedBackend = options.backend || process.env.ASEF_AGENT_BACKEND || 'direct-llm';
     this.allowMockFallback = options.allowMockFallback !== undefined ? options.allowMockFallback : true;
     this.projectDir = path.resolve(options.projectDir || process.cwd());
+    this.providerManager = options.providerManager || new ProviderManager();
   }
 
   /**
@@ -24,7 +26,16 @@ class ProviderExecutionManager {
     const targetBackend = options.backend || this.requestedBackend;
 
     // 1. Primary Attempt
-    let result = await this.tryBackend(targetBackend, prompt, stage, options);
+    let result = { success: false, error: 'Provider in cooldown or rate-limited' };
+    if (this.providerManager.isProviderAvailable(targetBackend)) {
+      result = await this.tryBackend(targetBackend, prompt, stage, options);
+      if (result.success) {
+        this.providerManager.recordSuccess(targetBackend);
+      } else if (result.error && (result.error.includes('429') || result.error.includes('rate limit'))) {
+        this.providerManager.recordRateLimit(targetBackend);
+      }
+    }
+
     fallbackChain.push({
       backend: targetBackend,
       success: result.success,
@@ -43,8 +54,14 @@ class ProviderExecutionManager {
     }
 
     // 2. Fallback to Direct LLM if Claude Code or Codex was requested
-    if (targetBackend === 'claude-code' || targetBackend === 'codex') {
+    if ((targetBackend === 'claude-code' || targetBackend === 'codex') && this.providerManager.isProviderAvailable('direct-llm')) {
       const fallbackResult = await this.tryBackend('direct-llm', prompt, stage, options);
+      if (fallbackResult.success) {
+        this.providerManager.recordSuccess('direct-llm');
+      } else if (fallbackResult.error && (fallbackResult.error.includes('429') || fallbackResult.error.includes('rate limit'))) {
+        this.providerManager.recordRateLimit('direct-llm');
+      }
+
       fallbackChain.push({
         backend: 'direct-llm',
         success: fallbackResult.success,

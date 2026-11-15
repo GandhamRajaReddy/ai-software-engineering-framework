@@ -18,6 +18,7 @@ class ItemCreate(ItemBase):
 class ItemUpdate(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=200)
     description: str | None = Field(default=None, max_length=2000)
+    expected_version: int = Field(..., description="Expected current version for optimistic concurrency control")
 
 class ItemResponse(ItemBase):
     id: str

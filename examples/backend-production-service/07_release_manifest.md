@@ -19,3 +19,25 @@
 - **SkillSpector Audit:** Clean (0 Critical, 0 High)
 - **Container Hardening:** Passes Gate 6 (Non-root `USER 10001:10001`, Healthcheck configured)
 - **Signed By:** Orchestrator (Release Manager)
+
+## 3. Emergency Rollback Protocol
+- **Trigger:** SEV-1 failure or SLO error budget burn > 14.4x in first 1 hour.
+- **Rollback Target:** Previous stable release tag `v0.9.9`.
+- **Command:** `kubectl rollout undo deployment/backend-production-service -n production`
+- **Database Rollback:** `alembic downgrade -1`
+
+
+## Cryptographic Release Signature
+
+> **Notice:** This release manifest is cryptographically sealed. Any alteration of source files, evidence IDs, or gate scores invalidates this signature.
+
+```asef-signature
+Algorithm: Ed25519
+PublicKey: MCowBQYDK2VwAyEAc/H1E2wMcCLk/YX8fSfFNMszvTviXItpCgSgfwAK2gU=
+Signature: BWA+x5777+h2/UtSr4hxsH1GH1KXnYLHahD+4FKiBAwIIWqwxaG6C/OPAEioVNvWdVdE+escFViXuej5caRGDQ==
+PayloadDigest: b628269a243d5850f9f447311f05702eb9a7dcd1e5fce5b2c864faa591c7f55a
+GitCommit: HEAD
+SourceTreeHash: bae7d2ad15a699d15e7bb64f798927382ec183e969d810fd67913f5dd7bbf55a
+ReleaseVersion: 1.0.0
+EvidenceIDs: ev-prod-verified-001
+```

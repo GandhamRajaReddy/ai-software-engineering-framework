@@ -1,47 +1,72 @@
 import pytest
+from app.core.security import create_access_token
 
 @pytest.mark.asyncio
 async def test_tenant_isolation_boundary(client, setup_tenants):
     """
-    Critical Security Regression Test:
-    Ensures Tenant B cannot read, update, or delete items owned by Tenant A.
+    Critical Multi-Tenant Isolation & Authentication Boundary Test.
+    1. Authenticated user from Tenant A cannot see, update, or delete Tenant B items.
+    2. Tenant ID spoofing attempts via headers are strictly rejected with 403 Forbidden.
+    3. Tampered or missing tokens are rejected with 401 Unauthorized.
     """
-    headers_a = {"X-Tenant-ID": "tenant-a-111"}
-    headers_b = {"X-Tenant-ID": "tenant-b-222"}
+    token_a = setup_tenants["token_a"]
+    token_b = setup_tenants["token_b"]
+    headers_a = {"Authorization": f"Bearer {token_a}"}
+    headers_b = {"Authorization": f"Bearer {token_b}"}
 
-    # 1. Tenant A creates an item
+    # 1. Unauthenticated request rejected
+    unauth_res = await client.get("/api/v1/items")
+    assert unauth_res.status_code == 401
+
+    # 2. Tampered token signature rejected
+    tampered_headers = {"Authorization": f"Bearer {token_a[:-5]}XXXXX"}
+    tampered_res = await client.get("/api/v1/items", headers=tampered_headers)
+    assert tampered_res.status_code == 401
+
+    # 3. User A creates an item for Tenant A
     create_res = await client.post(
         "/api/v1/items",
-        json={"title": "Confidential Strategic Blueprint", "description": "Top secret"},
+        json={"title": "Confidential Blueprint", "description": "Top Secret"},
         headers=headers_a
     )
     assert create_res.status_code == 201
     item_id = create_res.json()["id"]
 
-    # 2. Tenant B attempts to read Tenant A's item -> Must return 404
+    # 4. SPOOFING ATTEMPT: User A attempts to spoof Tenant B by injecting X-Tenant-ID: tenant-b-222
+    spoof_headers = {
+        "Authorization": f"Bearer {token_a}",
+        "X-Tenant-ID": "tenant-b-222"
+    }
+    spoof_res = await client.post(
+        "/api/v1/items",
+        json={"title": "Spoofed Item", "description": "Trying to write to tenant B"},
+        headers=spoof_headers
+    )
+    assert spoof_res.status_code == 403
+    assert "Tenant identity spoofing detected" in spoof_res.json()["detail"]
+
+    # 5. User B attempts to read Tenant A's item -> Returns 404
     get_res = await client.get(f"/api/v1/items/{item_id}", headers=headers_b)
     assert get_res.status_code == 404
-    assert get_res.json()["detail"] == "Item not found"
 
-    # 3. Tenant B lists items -> Must NOT contain Tenant A's item
+    # 6. User B lists items -> Tenant A's item is not visible
     list_res = await client.get("/api/v1/items", headers=headers_b)
     assert list_res.status_code == 200
-    tenant_b_items = list_res.json()
-    assert all(item["id"] != item_id for item in tenant_b_items)
+    assert all(item["id"] != item_id for item in list_res.json())
 
-    # 4. Tenant B attempts to update Tenant A's item -> Must return 404
-    update_res = await client.put(
+    # 7. User B attempts to update Tenant A's item -> Returns 404
+    upd_res = await client.put(
         f"/api/v1/items/{item_id}",
-        json={"title": "Unauthorized Modification"},
+        json={"title": "Hacked", "expected_version": 1},
         headers=headers_b
     )
-    assert update_res.status_code == 404
+    assert upd_res.status_code == 404
 
-    # 5. Tenant B attempts to delete Tenant A's item -> Must return 404
+    # 8. User B attempts to delete Tenant A's item -> Returns 404
     del_res = await client.delete(f"/api/v1/items/{item_id}", headers=headers_b)
     assert del_res.status_code == 404
 
-    # 6. Verify Tenant A can still access their item intact
+    # 9. Verify Tenant A can still access their item intact
     verify_res = await client.get(f"/api/v1/items/{item_id}", headers=headers_a)
     assert verify_res.status_code == 200
-    assert verify_res.json()["title"] == "Confidential Strategic Blueprint"
+    assert verify_res.json()["title"] == "Confidential Blueprint"

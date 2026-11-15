@@ -14,6 +14,10 @@ const { checkReleaseGate } = require('./release-gate-checker');
 const { AgentExecutionAdapter } = require('./agent-execution-adapter');
 const { ImageGenerator } = require('./image-generator');
 const { STAGES } = require('./stages-config');
+const { TaskDagScheduler } = require('./task-dag-scheduler');
+const { AntiHallucinationEnforcer } = require('../anti_hallucination/runtime_enforcement');
+const { SchemaValidator } = require('./schema-validator');
+const { computeSourceTreeHash } = require('./evidence-registry');
 
 class OrchestrationEngine {
   constructor(projectDir = process.cwd(), options = {}) {
@@ -22,6 +26,8 @@ class OrchestrationEngine {
     this.stateFile = path.join(this.stateDir, 'pipeline-state.json');
     this.activePipelineMd = path.join(this.projectDir, 'ACTIVE_PIPELINE.md');
     this.options = options;
+    this.scheduler = new TaskDagScheduler();
+    this.schemaValidator = new SchemaValidator();
   }
 
   /**
@@ -291,11 +297,33 @@ class OrchestrationEngine {
       // Auto-scaffold starter contract template if missing
       this.scaffoldStarterArtifact(nextIndex, state);
 
+      // Validate formal handoff against schema
+      const handoffPayload = {
+        handoff_id: `HO-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        timestamp: new Date().toISOString(),
+        from_stage: String(currentIndex).padStart(2, '0'),
+        to_stage: String(nextIndex).padStart(2, '0'),
+        from_agent: STAGES[currentIndex].agent,
+        to_agent: STAGES[nextIndex].agent,
+        artifacts_produced: (state.stages[currentIndex].artifacts && state.stages[currentIndex].artifacts.length > 0)
+          ? state.stages[currentIndex].artifacts
+          : [STAGES[currentIndex].targetArtifact],
+        source_tree_hash: computeSourceTreeHash(this.projectDir),
+        gate_status: 'PASSED',
+        context_summary: `Stage ${currentIndex} gate validated successfully.`
+      };
+
+      const handoffValidation = this.schemaValidator.validate(handoffPayload, 'agent_handoff_schema.json');
+      if (!handoffValidation.valid) {
+        console.warn(`[SchemaValidator] Agent handoff schema warning: ${handoffValidation.errors.join('; ')}`);
+      }
+
       state.history.push({
         timestamp: new Date().toISOString(),
         event: 'STAGE_ADVANCED',
         fromStage: currentIndex,
-        toStage: nextIndex
+        toStage: nextIndex,
+        handoff: handoffPayload
       });
 
       this.saveState(state);
@@ -519,6 +547,68 @@ class OrchestrationEngine {
     }
 
     return execResult;
+  }
+
+  /**
+   * Executes tasks within a stage using the Task DAG Scheduler with bounded concurrency
+   * and strict file ownership locking.
+   */
+  async executeStageWithDag(stageIndex = null, taskDefinitions = [], options = {}) {
+    const state = this.getState();
+    const targetStageIndex = stageIndex !== null ? stageIndex : state.currentStageIndex;
+    const stage = STAGES[targetStageIndex];
+
+    const dag = new TaskDagScheduler();
+    
+    // Register tasks
+    for (const t of taskDefinitions) {
+      dag.addTask({
+        id: t.id || t.task_id,
+        description: t.description || t.title,
+        dependsOn: t.dependsOn || t.dependencies || [],
+        dependencies: t.dependencies || t.dependsOn || [],
+        targetFiles: t.targetFiles || t.target_files || [],
+        assignedAgent: t.assignedAgent || t.assigned_agent || stage.agent,
+        execute: t.execute
+      });
+    }
+
+    const batches = dag.getExecutionBatches();
+    const taskResults = [];
+
+    const adapter = new AgentExecutionAdapter(this.projectDir, {
+      backend: options.backend || this.options.backend,
+      maxRetries: options.maxRetries || 3
+    });
+
+    for (const batch of batches) {
+      for (const task of batch) {
+        const assigned = task.assignedAgent || task.agent;
+        if (stage.index === 5 && (assigned === 'Senior Builder' || options.authorAgent === assigned)) {
+          throw new Error(`Dual control violation: Author cannot act as verifier in Stage 05.`);
+        }
+
+        let result;
+        if (typeof task.execute === 'function') {
+          result = await task.execute();
+        } else {
+          result = await adapter.executeStage(targetStageIndex, {
+            ...options,
+            targetFiles: task.targetFiles,
+            taskDescription: task.description
+          });
+        }
+        taskResults.push({ taskId: task.id, success: true, result });
+      }
+    }
+
+    return {
+      stageIndex: targetStageIndex,
+      stageId: stage.id,
+      totalTasks: taskDefinitions.length,
+      executedBatches: batches.length,
+      results: taskResults
+    };
   }
 
   /**

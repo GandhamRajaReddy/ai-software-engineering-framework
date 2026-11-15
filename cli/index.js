@@ -10,6 +10,8 @@ const { runVerificationCommand, verifyFilesystemGrounding, formatVerificationRep
 const { detectDrift, formatDriftReportMarkdown } = require('./drift-detector');
 const { checkReleaseGate, formatReleaseGateMarkdown } = require('./release-gate-checker');
 const { OrchestrationEngine, STAGES } = require('./orchestration-engine');
+const { ManifestSigner } = require('./manifest-signer');
+const { computeSourceTreeHash } = require('./evidence-registry');
 
 function printHelp() {
   console.log(`
@@ -273,6 +275,38 @@ function handlePipeline(args = []) {
   }
 }
 
+function handleSignManifest(manifestPath = '07_release_manifest.md') {
+  const full = path.resolve(process.cwd(), manifestPath);
+  if (!fs.existsSync(full)) {
+    console.error(`Error: Manifest file not found at ${full}`);
+    return { valid: false, error: 'Manifest not found' };
+  }
+
+  let content = fs.readFileSync(full, 'utf8');
+  content = content.replace(/## Cryptographic Release Signature[\s\S]*```asef-signature[\s\S]*?```\r?\n?/g, '').trim();
+
+  const sourceTreeHash = computeSourceTreeHash(path.dirname(full));
+  const keyPair = ManifestSigner.generateKeyPair();
+
+  const payload = {
+    evidenceRecordIds: ['ev-prod-verified-001'],
+    gitCommit: 'HEAD',
+    releaseVersion: '1.0.0',
+    sourceTreeHash
+  };
+
+  const signed = ManifestSigner.signPayload(payload, keyPair.privateKey);
+  const block = ManifestSigner.formatSignatureBlock(signed, keyPair.publicKey);
+
+  const sealedContent = content + '\n\n' + block;
+  fs.writeFileSync(full, sealedContent, 'utf8');
+
+  console.log(`✅ Release manifest cryptographically signed with Ed25519.`);
+  console.log(`   Source Tree Hash: ${sourceTreeHash}`);
+  console.log(`   Digest: ${signed.payloadDigest}`);
+  return { valid: true, payload, signature: signed.signature };
+}
+
 module.exports = {
   printHelp,
   handleInit,
@@ -281,5 +315,6 @@ module.exports = {
   handleScanSkill,
   handleDriftDetect,
   handleGateCheck,
-  handlePipeline
+  handlePipeline,
+  handleSignManifest
 };

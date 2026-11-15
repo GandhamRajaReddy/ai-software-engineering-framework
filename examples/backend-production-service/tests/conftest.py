@@ -4,6 +4,7 @@ from httpx import AsyncClient, ASGITransport
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from app.main import app
 from app.core.database import get_db
+from app.core.security import create_access_token
 from app.models.base import Base
 from app.models.tenant import Tenant
 
@@ -41,4 +42,13 @@ async def setup_tenants(db_session):
     tenant_b = Tenant(id="tenant-b-222", name="Beta Corp", slug="beta")
     db_session.add_all([tenant_a, tenant_b])
     await db_session.commit()
-    return {"tenant_a": tenant_a, "tenant_b": tenant_b}
+
+    token_a = create_access_token(user_id="user-a-1", email="alice@acme.com", tenant_id="tenant-a-111")
+    token_b = create_access_token(user_id="user-b-2", email="bob@beta.com", tenant_id="tenant-b-222")
+
+    return {
+        "tenant_a": tenant_a,
+        "tenant_b": tenant_b,
+        "token_a": token_a,
+        "token_b": token_b
+    }

@@ -12,7 +12,8 @@ const {
   handleScanSkill,
   handleDriftDetect,
   handleGateCheck,
-  handlePipeline
+  handlePipeline,
+  handleSignManifest
 } = require('../cli/index');
 
 const args = process.argv.slice(2);
@@ -50,6 +51,11 @@ switch (command) {
   case 'gate-check':
   case 'release-gate':
     handleGateCheck(args[1] || '.');
+    break;
+
+  case 'sign-manifest':
+  case 'sign':
+    handleSignManifest(args[1] || '07_release_manifest.md');
     break;
 
   case 'version':

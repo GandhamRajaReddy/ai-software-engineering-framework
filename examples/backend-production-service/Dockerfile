@@ -1,6 +1,6 @@
 # Multi-stage production container build
 # Stage 1: Build & Dependency Resolution
-FROM python:3.12-slim-bookworm AS builder
+FROM python:3.12.7-slim-bookworm AS builder
 
 WORKDIR /build
 
@@ -18,7 +18,7 @@ COPY requirements.txt .
 RUN pip install --prefix=/install -r requirements.txt
 
 # Stage 2: Hardened Runtime Container
-FROM python:3.12-slim-bookworm AS runtime
+FROM python:3.12.7-slim-bookworm AS runtime
 
 WORKDIR /app
 
@@ -50,7 +50,8 @@ USER 10001:10001
 
 EXPOSE 8000
 
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8000/healthz || exit 1
+# Dependency-aware readiness check verifies database connectivity before routing traffic
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD curl -f http://localhost:8000/readyz || exit 1
 
 ENTRYPOINT ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]

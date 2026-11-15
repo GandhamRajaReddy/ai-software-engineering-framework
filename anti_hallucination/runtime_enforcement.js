@@ -14,41 +14,80 @@ const FORBIDDEN_SPECULATIVE_TERMS = [
   /\bseems fixed\b/i,
   /\blooks good\b/i,
   /\btheoretically works\b/i,
-  /\bassumed to pass\b/i
+  /\bassumed to pass\b/i,
+  /\bexpected to work without testing\b/i
 ];
 
 const FORBIDDEN_PLACEHOLDER_PATTERNS = [
   /\/\/\s*\.\.\.\s*(?:existing|rest of|remaining)\s*code/i,
   /\/\*\s*\.\.\.\s*(?:existing|rest of|remaining)\s*code\s*\*\//i,
   /#\s*\.\.\.\s*(?:existing|rest of|remaining)\s*code/i,
-  /\/\/\s*TODO:\s*implement/i,
-  /#\s*TODO:\s*implement/i
+  /\/\/\s*TODO:\s*(?:implement|fill in|add logic)/i,
+  /#\s*TODO:\s*(?:implement|fill in|add logic)/i,
+  /\/\*\s*TODO:\s*(?:implement|fill in|add logic)\s*\*\//i,
+  /pass\s*#\s*\.\.\.\s*implement/i,
+  /throw new Error\(\s*["']Not implemented["']\s*\)/i
 ];
 
 class AntiHallucinationEnforcer {
   /**
-   * Law 1: Enforces that every referenced path physically exists on disk.
+   * Law 1: Enforces physical filesystem grounding AND project root containment.
    */
   static verifyFilesystemGrounding(projectDir, referencedPaths = []) {
     const missing = [];
+    const escaped = [];
+    const resolvedRoot = path.resolve(projectDir);
+
     for (const relPath of referencedPaths) {
-      const fullPath = path.resolve(projectDir, relPath);
+      const fullPath = path.resolve(resolvedRoot, relPath);
+
+      // Root containment check
+      const relToRoot = path.relative(resolvedRoot, fullPath);
+      if (relToRoot.startsWith('..') || path.isAbsolute(relToRoot)) {
+        escaped.push(relPath);
+        continue;
+      }
+
       if (!fs.existsSync(fullPath)) {
         missing.push(relPath);
+      } else {
+        // Symlink escape check
+        try {
+          const real = fs.realpathSync(fullPath);
+          const realRel = path.relative(resolvedRoot, real);
+          if (realRel.startsWith('..') || path.isAbsolute(realRel)) {
+            escaped.push(relPath);
+          }
+        } catch {
+          missing.push(relPath);
+        }
       }
     }
+
+    if (escaped.length > 0) {
+      return {
+        valid: false,
+        escapedPaths: escaped,
+        missingPaths: missing,
+        reason: `Path containment violation: ${escaped.join(', ')} escapes project root.`,
+        law: 'Law 1: Physical Filesystem Grounding & Containment'
+      };
+    }
+
     return {
       valid: missing.length === 0,
       missingPaths: missing,
-      law: 'Law 1: Physical Filesystem Grounding'
+      reason: missing.length > 0 ? `Missing grounded files on disk: ${missing.join(', ')}` : null,
+      law: 'Law 1: Physical Filesystem Grounding & Containment'
     };
   }
 
   /**
    * Law 2: Audits that completion claims are backed by physical test execution (exit code 0).
-   * Rejects speculative phrases and missing execution results.
+   * Authenticates execution records against the Evidence Registry, rejects mock mode,
+   * and blocks speculative language.
    */
-  static auditVerificationInvariant(claimText, executionResult) {
+  static auditVerificationInvariant(claimText, executionResult, evidenceRecord = null) {
     // 1. Check for speculative phrases
     for (const pattern of FORBIDDEN_SPECULATIVE_TERMS) {
       if (pattern.test(claimText)) {
@@ -60,7 +99,25 @@ class AntiHallucinationEnforcer {
       }
     }
 
-    // 2. Must have execution result
+    // 2. Validate evidence authenticity if record is provided
+    if (evidenceRecord) {
+      if (evidenceRecord.isMock === true) {
+        return {
+          valid: false,
+          reason: 'Evidence provenance violation: Execution was generated under simulated/mock mode and cannot satisfy production verification.',
+          law: 'Law 2: Verification Command Invariant'
+        };
+      }
+      if (evidenceRecord.stale === true) {
+        return {
+          valid: false,
+          reason: 'Stale evidence violation: Source code files were modified after test execution.',
+          law: 'Law 2: Verification Command Invariant'
+        };
+      }
+    }
+
+    // 3. Must have execution result
     if (!executionResult) {
       return {
         valid: false,

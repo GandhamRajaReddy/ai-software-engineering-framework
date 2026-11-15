@@ -17,7 +17,18 @@
     },
     "type": {
       "type": "string",
-      "enum": ["test-suite", "security-audit", "stage-execution", "release-decision"]
+      "enum": [
+        "TEST_EXECUTION",
+        "SECURITY_SCAN",
+        "CODE_REVIEW",
+        "DEPLOYMENT_CHECK",
+        "STAGE_EXECUTION",
+        "RELEASE_DECISION",
+        "test-suite",
+        "security-audit",
+        "stage-execution",
+        "release-decision"
+      ]
     },
     "timestamp": {
       "type": "string"
@@ -26,7 +37,14 @@
       "type": "string",
       "pattern": "^[a-f0-9]{64}$"
     },
+    "sourceHash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
     "isMock": {
+      "type": "boolean"
+    },
+    "stale": {
       "type": "boolean"
     },
     "provenance": {

@@ -13,6 +13,7 @@ const { ProviderExecutionManager } = require('./provider-execution-manager');
 const { recordEvidence } = require('./evidence-registry');
 const { SkillRegistry } = require('./skill-registry');
 const { STAGES } = require('./stages-config');
+const { AntiHallucinationEnforcer } = require('../anti_hallucination/runtime_enforcement');
 
 class AgentExecutionAdapter {
   constructor(projectDir = process.cwd(), options = {}) {
@@ -69,6 +70,12 @@ class AgentExecutionAdapter {
       throw err;
     }
 
+    // Anti-Hallucination Law 5: Full output completeness check
+    const completenessCheck = AntiHallucinationEnforcer.verifyOutputCompleteness(agentResponse.content);
+    if (!completenessCheck.valid) {
+      console.warn(`[AntiHallucination] ${completenessCheck.reason}`);
+    }
+
     // 4. Safely collect generated artifacts with root containment & SHA-256 hashing
     const collectedRecords = collectArtifactsSafely(
       agentResponse.content,
@@ -78,11 +85,26 @@ class AgentExecutionAdapter {
     );
     const collectedFiles = collectedRecords.map(r => r.relativePath);
 
+    // Anti-Hallucination Law 1: Physical filesystem grounding & containment check
+    const groundingCheck = AntiHallucinationEnforcer.verifyFilesystemGrounding(this.projectDir, collectedFiles);
+    if (!groundingCheck.valid) {
+      throw new Error(`[AntiHallucination] ${groundingCheck.reason}`);
+    }
+
     // 5. Verification & Feedback Loop (Self-Healing TDD)
     let verificationResult = { passed: true, command: 'none', attempts: 1 };
     if (stage.index >= 4) { // Stage 04 (Implementation) and Stage 05 (Verification)
       const testCommand = context.testCommand || 'npm test';
       verificationResult = await this.runFeedbackLoop(testCommand, stage, collectedFiles, agentResponse);
+
+      // Anti-Hallucination Law 2: Verification invariant audit
+      const invariantAudit = AntiHallucinationEnforcer.auditVerificationInvariant(
+        agentResponse.content,
+        { exitCode: verificationResult.exitCode !== undefined ? verificationResult.exitCode : (verificationResult.passed ? 0 : 1) }
+      );
+      if (!invariantAudit.valid) {
+        console.warn(`[AntiHallucination] ${invariantAudit.reason}`);
+      }
     }
 
     // 6. Commit to Git if verification passed

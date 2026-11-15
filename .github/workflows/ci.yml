@@ -16,47 +16,122 @@ jobs:
     if: github.event_name == 'pull_request'
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
 
       - name: Dependency Review
-        uses: actions/dependency-review-action@v4
+        uses: actions/dependency-review-action@5a2ce3f5b92ee19cbb1541a4984b76d921601d7c # v4.3.4
 
-  test:
+  node-test:
     name: Hardened Subprocess & Verification Tests
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
         with:
           node-version: '20'
-          cache: 'npm'
 
-      - name: Reproducible Install
-        run: npm ci || npm install
+      - name: Reproducible Node Install (No Fallback)
+        run: npm ci
 
-      - name: Run Test Suite
+      - name: Run Node Test Suite
         run: npm test
+
+  backend-verification:
+    name: Reference Backend Pytest & Migrations
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: testuser
+          POSTGRES_PASSWORD: testpassword
+          POSTGRES_DB: testdb
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Setup Python
+        uses: actions/setup-python@0b93645e9fea7318ec82b359559c99e981bc53c1 # v5.3.0
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install Locked Python Dependencies
+        working-directory: examples/backend-production-service
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run Pytest Suite with Tenant Boundary Assertions
+        working-directory: examples/backend-production-service
+        env:
+          DATABASE_URL: postgresql+asyncpg://testuser:testpassword@localhost:5432/testdb
+          ENVIRONMENT: test
+        run: |
+          pytest tests/ -v
+
+      - name: Validate Alembic Schema Upgrades & Downgrades
+        working-directory: examples/backend-production-service
+        env:
+          DATABASE_URL: postgresql+asyncpg://testuser:testpassword@localhost:5432/testdb
+        run: |
+          alembic upgrade head
+          alembic downgrade -1
+          alembic upgrade head
+
+  docker-build-smoke:
+    name: Production Docker Multi-Stage Build & Smoke
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Build Hardened Container
+        run: |
+          docker build -t asef/backend-reference:test examples/backend-production-service/
+
+      - name: Container Smoke Test (/readyz)
+        run: |
+          docker run -d --name test-api -p 8000:8000 asef/backend-reference:test
+          sleep 5
+          curl -f http://localhost:8000/readyz || exit 1
+          docker stop test-api
 
   security-audit:
     name: SkillSpector & Release Policy Audit
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
         with:
           node-version: '20'
+
+      - name: Reproducible Node Install
+        run: npm ci
 
       - name: Run SkillSpector Static Scan
         run: node bin/asef.js scan-skill skills/

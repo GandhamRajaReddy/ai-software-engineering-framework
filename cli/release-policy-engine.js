@@ -10,6 +10,7 @@ const path = require('path');
 const { scanDirectory } = require('./skillspector-scanner');
 const { verifyFilesystemGrounding } = require('./verification-engine');
 const { getValidEvidence, computeSourceTreeHash } = require('./evidence-registry');
+const { ManifestSigner } = require('./manifest-signer');
 
 const GATES = [
   { id: 'GATE_1', name: 'Requirements & Acceptance Criteria Traceability', weight: 15 },
@@ -235,11 +236,18 @@ function evaluateReleasePolicy(projectDir = process.cwd(), options = {}) {
     const hasRollback = /rollback/i.test(manifestContent);
     const hasVersion = /(version|v[0-9]+\.[0-9]+)/i.test(manifestContent);
 
-    if (hasRollback && hasVersion) {
-      manifestPassed = true;
-      manifestEvidence = `Release manifest verified in ${foundManifest} with version tag and rollback protocol.`;
+    if (!hasRollback || !hasVersion) {
+      manifestEvidence = `${foundManifest} exists but lacks explicit rollback protocol or semantic version tag.`;
     } else {
-      manifestEvidence = `${foundManifest} exists but lacks explicit rollback instructions.`;
+      // Validate real cryptographic Ed25519 signature
+      const currentTreeHash = computeSourceTreeHash(resolvedDir);
+      const sigVerification = ManifestSigner.verifyManifest(manifestContent, currentTreeHash);
+      if (sigVerification.valid) {
+        manifestPassed = true;
+        manifestEvidence = `Release manifest verified in ${foundManifest} with valid Ed25519 signature bound to source tree ${currentTreeHash.slice(0, 12)}...`;
+      } else {
+        manifestEvidence = `Release manifest signature validation failed: ${sigVerification.reason}`;
+      }
     }
   }
 

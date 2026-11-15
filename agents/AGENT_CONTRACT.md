@@ -18,23 +18,31 @@ This document defines the universal protocol, operational boundaries, security r
 - Path traversal escapes (`../`), symlink traps, and writes to protected infrastructure files (`.git/`, `node_modules/`, `.env`, `bin/asef.js`) are blocked at runtime by the `ArtifactIntegrityManager`.
 - Dangerous executable file extensions (`.exe`, `.bat`, `.cmd`, `.ps1`) are rejected.
 
-### 1.3 Prohibition of Self-Approval (The Dual-Control Rule)
-- **Zero Self-Verification**: The agent that authors code or artifacts (`senior_builder`, `devops_engineer`) is strictly prohibited from signing off on test evidence, security audits, or release approvals.
-- Verification and release gate decisions must be executed by independent review agents (`test_lead`, `security_auditor`, `system_architect`) backed by verifiable cryptographic evidence in the `EvidenceRegistry`.
+### 1.3 Mathematical Independence & Dual-Control Invariants
+To prevent self-approval conflicts, the framework enforces mathematical role independence:
+
+$$\text{author\_agent\_id} \neq \text{reviewer\_agent\_id}$$
+$$\text{author\_agent\_id} \neq \text{approver\_agent\_id}$$
+$$\text{reviewer\_agent\_id} \neq \text{approver\_agent\_id}$$
+
+For all production releases, three distinct agent entities must be involved:
+1. **The Builder**: Authors the code, patch, or deployment configuration (`senior_builder`, `devops_engineer`).
+2. **The Independent Verifier**: Executes tests, performs static audits, and verifies invariants. **Under no circumstances may an authoring agent act as verifier for its own task.**
+3. **The Release Approver**: Evaluates evidence in the `EvidenceRegistry` and produces signed release decisions (`orchestrator`). The approver cannot author code or execute primary reviews.
 
 ---
 
-## 2. Reviewer Specialist Capabilities & Roles
+## 2. Reviewer Specialist Capabilities & Disjoint Roles
 
-To ensure production-grade depth, review stages delegate to explicit specialist review roles:
+To eliminate self-review ambiguity, reviewer capabilities are assigned to independent reviewer agents:
 
-| Specialist Capability | Primary Agent | Review Responsibilities & Mandate |
-|:----------------------|:--------------|:----------------------------------|
-| **Backend Architecture Reviewer** | `system_architect` | Audits service boundaries, domain invariant encapsulation, clean layer isolation, data ownership, and aggregate consistency. |
-| **Database Reliability Reviewer** | `senior_builder` (Review Mode) | Audits SQL query plans, index efficiency, connection pool sizing, transaction boundaries (`select_for_update`), deadlock prevention, and migration reversibility. |
-| **Identity & Authorization Reviewer** | `security_auditor` | Audits OAuth2/OIDC flows, JWT cryptographic validation (RS256), refresh token rotation, RBAC/ABAC policy engines, and multi-tenant isolation boundaries. |
-| **SRE / Reliability Reviewer** | `devops_engineer` / `test_lead` | Audits Service Level Objectives (SLOs), error budgets, multi-window burn-rate alerts, circuit breaker fallbacks, load shedding, and runbook coverage. |
-| **Independent API Contract Reviewer**| `test_lead` | Audits OpenAPI 3.1 specification parity, consumer-driven contract (Pact) test coverage, webhook replay defense, and breaking change detection. |
+| Specialist Capability | Independent Reviewer Agent | Disjoint Author Role (Cannot Self-Review) | Review Mandate |
+|:----------------------|:---------------------------|:------------------------------------------|:---------------|
+| **Backend Architecture Reviewer** | `system_architect` | `senior_builder` | Audits service boundaries, domain invariant encapsulation, clean layer isolation, data ownership, and aggregate consistency. |
+| **Database Reliability Reviewer** | `system_architect` | `senior_builder` | Audits SQL query plans, index efficiency, connection pool sizing, transaction boundaries (`select_for_update`), deadlock prevention, and migration reversibility. |
+| **Identity & Authorization Reviewer** | `security_auditor` | `senior_builder` | Audits OAuth2/OIDC flows, JWT cryptographic validation, refresh token rotation, RBAC/ABAC policy engines, and multi-tenant isolation boundaries. |
+| **SRE / Reliability Reviewer** | `test_lead` | `devops_engineer` | Audits Service Level Objectives (SLOs), error budgets, multi-window burn-rate alerts, circuit breaker fallbacks, load shedding, and runbook coverage. |
+| **Independent API Contract Reviewer**| `test_lead` | `senior_builder` | Audits OpenAPI 3.1 specification parity, consumer-driven contract (Pact) test coverage, webhook replay defense, and breaking change detection. |
 
 ---
 
@@ -46,6 +54,7 @@ No stage may advance or be marked as passed based on textual claims or assertion
 2. **Deterministic Source Tree Hash**: All verification and test results are cryptographically bound to the SHA-256 hash of the working tree. Any modification to source files immediately invalidates downstream evidence.
 3. **Mock Mode Quarantine**: Any execution produced under mock or simulation backends (`isMock: true`) is permanently quarantined in the `EvidenceRegistry` and cannot satisfy production release criteria.
 4. **Zero Exit Code Verification**: Test evidence records must capture the raw standard output, standard error, duration, and a clean exit code (`0`).
+5. **Cryptographic Manifest Signature**: Release manifests must contain an Ed25519 digital signature binding the Git commit SHA, source tree hash, release version, and evidence IDs.
 
 ---
 

@@ -1,28 +1,22 @@
-from fastapi import APIRouter, Depends, HTTPException, Header, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.exc import StaleDataError
 from sqlalchemy import select
 from app.core.database import get_db
+from app.core.security import get_current_user, AuthenticatedUser
 from app.models.item import Item
 from app.api.v1.schemas import ItemCreate, ItemUpdate, ItemResponse
 
 router = APIRouter(prefix="/items", tags=["items"])
 
-async def get_current_tenant_id(x_tenant_id: str = Header(...)) -> str:
-    if not x_tenant_id or len(x_tenant_id.strip()) == 0:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Missing required X-Tenant-ID header"
-        )
-    return x_tenant_id.strip()
-
 @router.post("", response_model=ItemResponse, status_code=status.HTTP_201_CREATED)
 async def create_item(
     payload: ItemCreate,
-    tenant_id: str = Depends(get_current_tenant_id),
+    current_user: AuthenticatedUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     item = Item(
-        tenant_id=tenant_id,
+        tenant_id=current_user.tenant_id,
         title=payload.title,
         description=payload.description
     )
@@ -33,20 +27,20 @@ async def create_item(
 
 @router.get("", response_model=list[ItemResponse])
 async def list_items(
-    tenant_id: str = Depends(get_current_tenant_id),
+    current_user: AuthenticatedUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    query = select(Item).where(Item.tenant_id == tenant_id).order_by(Item.created_at.desc())
+    query = select(Item).where(Item.tenant_id == current_user.tenant_id).order_by(Item.created_at.desc())
     result = await db.execute(query)
     return result.scalars().all()
 
 @router.get("/{item_id}", response_model=ItemResponse)
 async def get_item(
     item_id: str,
-    tenant_id: str = Depends(get_current_tenant_id),
+    current_user: AuthenticatedUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    query = select(Item).where(Item.id == item_id, Item.tenant_id == tenant_id)
+    query = select(Item).where(Item.id == item_id, Item.tenant_id == current_user.tenant_id)
     result = await db.execute(query)
     item = result.scalar_one_or_none()
     if not item:
@@ -57,32 +51,46 @@ async def get_item(
 async def update_item(
     item_id: str,
     payload: ItemUpdate,
-    tenant_id: str = Depends(get_current_tenant_id),
+    current_user: AuthenticatedUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    query = select(Item).where(Item.id == item_id, Item.tenant_id == tenant_id)
+    query = select(Item).where(Item.id == item_id, Item.tenant_id == current_user.tenant_id)
     result = await db.execute(query)
     item = result.scalar_one_or_none()
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
+
+    # Optimistic Concurrency Control: verify caller's expected version
+    if item.version != payload.expected_version:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Optimistic lock conflict: Item version is {item.version}, but client expected {payload.expected_version}. Reload and retry."
+        )
 
     if payload.title is not None:
         item.title = payload.title
     if payload.description is not None:
         item.description = payload.description
 
-    item.version += 1
-    await db.commit()
-    await db.refresh(item)
+    try:
+        await db.commit()
+        await db.refresh(item)
+    except StaleDataError:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Concurrent modification detected. Row version has diverged."
+        )
+
     return item
 
 @router.delete("/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_item(
     item_id: str,
-    tenant_id: str = Depends(get_current_tenant_id),
+    current_user: AuthenticatedUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    query = select(Item).where(Item.id == item_id, Item.tenant_id == tenant_id)
+    query = select(Item).where(Item.id == item_id, Item.tenant_id == current_user.tenant_id)
     result = await db.execute(query)
     item = result.scalar_one_or_none()
     if not item:

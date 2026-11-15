@@ -146,6 +146,7 @@ function recordEvidence(projectDir, evidenceInput) {
     timestamp: new Date().toISOString(),
     sourceCommit: currentCommit,
     sourceHash: currentSourceHash,
+    sourceTreeHash: currentSourceHash,
     isMock: Boolean(evidenceInput.isMock),
     command: evidenceInput.command || 'none',
     exitCode: evidenceInput.exitCode !== undefined ? evidenceInput.exitCode : 0,
@@ -154,7 +155,18 @@ function recordEvidence(projectDir, evidenceInput) {
     environmentFingerprint: getEnvironmentFingerprint(),
     details: evidenceInput.details || {},
     reviewer: evidenceInput.reviewer || null,
-    summary: evidenceInput.summary || ''
+    summary: evidenceInput.summary || '',
+    provenance: evidenceInput.provenance || {
+      agent: evidenceInput.reviewer || 'test_lead',
+      backend: evidenceInput.backend || 'native',
+      gitCommit: currentCommit,
+      loadedSkills: []
+    },
+    data: evidenceInput.data || evidenceInput.details || {
+      command: evidenceInput.command || 'none',
+      exitCode: evidenceInput.exitCode !== undefined ? evidenceInput.exitCode : 0,
+      summary: evidenceInput.summary || ''
+    }
   };
 
   registry.records.push(evidenceRecord);
