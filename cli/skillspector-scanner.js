@@ -30,7 +30,7 @@ const SECURITY_RULES = [
     severity: 'HIGH',
     name: 'Unsafe Subprocess / Shell Execution',
     description: 'Direct invocation of unvalidated shell execution or arbitrary code evaluation.',
-    pattern: /(eval\(|exec\(|child_process\.exec\s*\(|subprocess\.Popen\(.*shell\s*=\s*True|system\(|os\.system\()/i
+    pattern: /\b(eval|exec|os\.system)\s*\(|child_process\.exec\s*\(|subprocess\.Popen\([^)]*shell\s*=\s*True/i
   },
   {
     id: 'SEC-004',

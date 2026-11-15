@@ -11,89 +11,9 @@ const { scanDirectory } = require('./skillspector-scanner');
 const { runVerificationCommand, verifyFilesystemGrounding } = require('./verification-engine');
 const { detectDrift } = require('./drift-detector');
 const { checkReleaseGate } = require('./release-gate-checker');
-
-const STAGES = [
-  {
-    index: 0,
-    id: '00_PROBLEM_INGESTION',
-    name: 'Problem Statement Ingestion',
-    agent: 'Orchestrator & Requirements Analyst',
-    skill: 'evidence-based-stack-selection',
-    template: 'contracts/problem_statement_template.md',
-    targetArtifact: '00_problem_statement.md',
-    description: 'Ingest raw problem statement, extract business bounds, user personas, and hard constraints.'
-  },
-  {
-    index: 1,
-    id: '01_REQUIREMENTS',
-    name: 'Requirements Engineering',
-    agent: 'Requirements Analyst',
-    skill: 'evidence-based-stack-selection',
-    template: 'contracts/feature_contract_template.md',
-    targetArtifact: '01_requirements_spec.md',
-    description: 'Deconstruct problem into functional requirements (REQ-001..N) and non-functional bounds with Gherkin acceptance criteria.'
-  },
-  {
-    index: 2,
-    id: '02_ARCHITECTURE',
-    name: 'Evidence-Based Architecture & Stack Selection',
-    agent: 'System Architect',
-    skill: 'evidence-based-stack-selection',
-    template: 'contracts/tech_decision_record_template.md',
-    targetArtifact: '02_tech_decision_record.md',
-    description: 'Evaluate candidate stacks against functional/NFR constraints, generate trade-off matrix and C4 architecture.'
-  },
-  {
-    index: 3,
-    id: '03_PLANNING',
-    name: 'Work Breakdown & Dependency Planning',
-    agent: 'Task Planner',
-    skill: 'token-budget-optimization',
-    template: 'contracts/implementation_plan_template.md',
-    targetArtifact: '03_implementation_plan.md',
-    description: 'Fracture architecture into sequenced milestones, atomic tasks (<=50 lines), and assumptions ledger.'
-  },
-  {
-    index: 4,
-    id: '04_IMPLEMENTATION',
-    name: 'Surgical Implementation & TDD',
-    agent: 'Senior Builder',
-    skill: 'surgical-implementation-tdd',
-    template: 'contracts/patch_contract_template.md',
-    targetArtifact: '04_patch_contract.md',
-    description: 'Implement atomic tasks via Red-Green-Refactor TDD cycle using minimal surgical diffs.'
-  },
-  {
-    index: 5,
-    id: '05_VERIFICATION',
-    name: 'Automated Verification & Security Auditing',
-    agent: 'Test Lead & Security Auditor',
-    skill: 'verification-before-completion',
-    template: 'contracts/test_evidence_report_template.md',
-    targetArtifact: '05_verification_report.md',
-    description: 'Enforce the Iron Law: fresh test evidence (Exit 0), SkillSpector security scan, and filesystem grounding.'
-  },
-  {
-    index: 6,
-    id: '06_DEPLOYMENT',
-    name: 'Containerization & Infrastructure',
-    agent: 'DevOps Engineer',
-    skill: 'production-deployment-gate',
-    template: null,
-    targetArtifact: 'Dockerfile',
-    description: 'Create multi-stage non-root Dockerfile, docker-compose, health check probes (/healthz), and CI/CD workflows.'
-  },
-  {
-    index: 7,
-    id: '07_RELEASE_GATE',
-    name: 'Production Readiness Release Gate',
-    agent: 'Release Manager & Orchestrator',
-    skill: 'production-deployment-gate',
-    template: 'contracts/release_manifest_template.md',
-    targetArtifact: '07_release_manifest.md',
-    description: 'Audit the 7 Iron-Clad Release Gates (Score 100/100 required) and produce signed release manifest.'
-  }
-];
+const { AgentExecutionAdapter } = require('./agent-execution-adapter');
+const { ImageGenerator } = require('./image-generator');
+const { STAGES } = require('./stages-config');
 
 class OrchestrationEngine {
   constructor(projectDir = process.cwd(), options = {}) {
@@ -543,6 +463,97 @@ class OrchestrationEngine {
     md += `\`\`\`\n`;
 
     fs.writeFileSync(this.activePipelineMd, md, 'utf8');
+  }
+
+  /**
+   * Executes the active stage using the configured Agent Execution Adapter
+   */
+  async executeStageWithAgent(stageIndex = null, options = {}) {
+    const state = this.getState();
+    const targetStageIndex = stageIndex !== null ? stageIndex : state.currentStageIndex;
+    const stage = STAGES[targetStageIndex];
+
+    const adapter = new AgentExecutionAdapter(this.projectDir, {
+      backend: options.backend || this.options.backend,
+      maxRetries: options.maxRetries || 3
+    });
+
+    // Gather context from previous stage
+    let priorContent = '';
+    if (targetStageIndex > 0) {
+      const priorStage = STAGES[targetStageIndex - 1];
+      const priorPath = path.join(this.projectDir, priorStage.targetArtifact);
+      if (fs.existsSync(priorPath)) {
+        priorContent = fs.readFileSync(priorPath, 'utf8');
+      }
+    }
+
+    const execResult = await adapter.executeStage(targetStageIndex, {
+      problemStatement: state.problemStatement,
+      priorArtifactContent: priorContent,
+      testCommand: options.testCommand || 'npm test'
+    });
+
+    if (execResult.success) {
+      // Add artifacts to stage record
+      for (const art of execResult.collectedFiles) {
+        if (!state.stages[targetStageIndex].artifacts.includes(art)) {
+          state.stages[targetStageIndex].artifacts.push(art);
+        }
+      }
+      this.saveState(state);
+    }
+
+    return execResult;
+  }
+
+  /**
+   * Generates a complete high-definition image suite for the project
+   */
+  generateProjectImages(options = {}) {
+    const state = this.getState();
+    const generator = new ImageGenerator(this.projectDir, options);
+    return generator.generateProjectVisualSuite(
+      options.projectName || state.projectName,
+      options.description || state.problemStatement || 'Enterprise production verified application',
+      options
+    );
+  }
+
+  /**
+   * Automated end-to-end execution across all 7 stages using execution adapters
+   */
+  async autoRun(problemStatement, options = {}) {
+    this.startPipeline(problemStatement, options);
+    const results = [];
+
+    for (let i = 0; i < STAGES.length; i++) {
+      // Execute stage with agent
+      const exec = await this.executeStageWithAgent(i, options);
+      results.push({ stageIndex: i, stage: STAGES[i], exec });
+
+      // Advance stage
+      const adv = this.advanceStage();
+      if (!adv.success && !adv.completed) {
+        return {
+          success: false,
+          failedAtStage: i,
+          adv,
+          results
+        };
+      }
+    }
+
+    // Generate project visuals upon successful completion
+    const visuals = this.generateProjectImages(options);
+
+    return {
+      success: true,
+      completed: true,
+      results,
+      visuals,
+      finalState: this.getState()
+    };
   }
 }
 

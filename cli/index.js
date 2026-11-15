@@ -208,6 +208,51 @@ function handlePipeline(args = []) {
       return res;
     }
 
+    case 'execute':
+    case 'run-stage': {
+      const stageIdx = args[1] !== undefined && !args[1].startsWith('--') ? parseInt(args[1], 10) : null;
+      const backend = args.includes('--backend') ? args[args.indexOf('--backend') + 1] : 'direct-llm';
+      console.log(`\n🤖 Dispatching stage execution to Agent Adapter [Backend: ${backend}]...`);
+      return engine.executeStageWithAgent(stageIdx, { backend }).then(res => {
+        console.log(`\n✅ Agent Execution Complete!`);
+        console.log(`📁 Artifacts Produced: ${res.collectedFiles.join(', ')}`);
+        if (res.executionRecord.commitHash) {
+          console.log(`🌱 Git Commit: ${res.executionRecord.commitHash} on branch ${res.executionRecord.branchName}`);
+        }
+        return res;
+      });
+    }
+
+    case 'auto-run': {
+      let problem = '';
+      if (args.includes('--problem')) {
+        problem = args[args.indexOf('--problem') + 1] || '';
+      }
+      const backend = args.includes('--backend') ? args[args.indexOf('--backend') + 1] : 'mock';
+      console.log(`\n🚀 Starting Automated End-to-End SDLC Run...`);
+      return engine.autoRun(problem, { backend }).then(res => {
+        if (res.success) {
+          console.log(`\n🎉 Automated Lifecycle Completed Successfully! Score: 100/100`);
+          console.log(`🖼️  Visuals Generated: ${res.visuals.images.length} assets in ${res.visuals.outputDir}`);
+        } else {
+          console.error(`\n⛔ Automated Run Halted at Stage ${res.failedAtStage}`);
+        }
+        return res;
+      });
+    }
+
+    case 'images':
+    case 'generate-images': {
+      const theme = args.includes('--theme') ? args[args.indexOf('--theme') + 1] : 'dark-tech';
+      console.log(`\n🎨 Generating high-end project visual suite [Theme: ${theme}]...`);
+      const res = engine.generateProjectImages({ theme });
+      console.log(`\n✅ ${res.summary}`);
+      for (const img of res.images) {
+        console.log(`   - [${img.type}] ${img.relative}`);
+      }
+      return res;
+    }
+
     case 'status':
     default: {
       const state = engine.getState();

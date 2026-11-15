@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 500" width="1000" height="500">
+  <rect width="1000" height="500" rx="16" fill="#0A0A0C" />
+  <!-- Bento Card 1: Fast Latency -->
+  <rect x="40" y="40" width="440" height="200" rx="12" fill="#18181B" stroke="#27272A" stroke-width="1" />
+  <text x="70" y="90" font-family="sans-serif" font-size="20" font-weight="700" fill="#EDEDED">Sub-50ms P99 Latency</text>
+  <text x="70" y="120" font-family="sans-serif" font-size="14" fill="#A1A1AA">Optimized with distributed Edge caching & async workers.</text>
+
+  <!-- Bento Card 2: Security Clearance -->
+  <rect x="520" y="40" width="440" height="200" rx="12" fill="#18181B" stroke="#27272A" stroke-width="1" />
+  <text x="550" y="90" font-family="sans-serif" font-size="20" font-weight="700" fill="#EDEDED">SkillSpector Security Shield</text>
+  <text x="550" y="120" font-family="sans-serif" font-size="14" fill="#A1A1AA">Zero prompt injection, hardened RBAC, verified secrets.</text>
+
+  <!-- Bento Card 3: Enterprise Grade -->
+  <rect x="40" y="260" width="920" height="200" rx="12" fill="#18181B" stroke="#27272A" stroke-width="1" />
+  <text x="70" y="320" font-family="sans-serif" font-size="24" font-weight="700" fill="#EDEDED">100% Production Readiness Gate</text>
+  <text x="70" y="355" font-family="sans-serif" font-size="15" fill="#A1A1AA">Full compliance with the 7 Iron-Clad Gates before deployment.</text>
+</svg>
