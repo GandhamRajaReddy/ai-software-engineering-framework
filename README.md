@@ -120,6 +120,28 @@ Paste this prompt into **Claude Code**, **Cursor**, **Antigravity**, or **Windsu
 
 ---
 
+## 🎛️ The Orchestration Engine (Workflow Controller)
+
+The **Orchestration Engine** (`cli/orchestration-engine.js`) binds skills, specialist agents, contract templates, and verification gates into an automated state machine:
+
+```bash
+# Start a new structured development pipeline
+node bin/asef.js pipeline start --problem "Build a privacy-first URL shortener" --stack "modern-ts-fullstack"
+
+# Check live pipeline status and living Mermaid diagram
+node bin/asef.js pipeline status
+
+# Validate current stage gates and advance to the next stage
+node bin/asef.js pipeline advance
+
+# Rollback safely to an earlier stage if requirements change
+node bin/asef.js pipeline rollback 2
+```
+
+See the [Orchestration Engine Documentation](lifecycle/ORCHESTRATION_ENGINE.md) for full architecture details.
+
+---
+
 ## 🧠 Evidence-Based Technology Selection Engine
 
 This is **not a monolithic application**. It does not force every project into React, MERN, or any single stack.

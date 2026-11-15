@@ -33,6 +33,7 @@ Thumbs.db
 *.swo
 
 # Framework Generated Run Artifacts
+.asef/
 .asef-cache/
 .asef-temp/
 test-results/

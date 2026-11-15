@@ -28,7 +28,7 @@
   },
   "type": "commonjs",
   "scripts": {
-    "test": "node --test tests/cli.test.js tests/skillspector.test.js tests/stack-evaluator.test.js tests/verification.test.js",
+    "test": "node --test tests/cli.test.js tests/skillspector.test.js tests/stack-evaluator.test.js tests/verification.test.js tests/orchestration.test.js",
     "lint": "node bin/asef.js verify --lint-only",
     "scan:skills": "node bin/asef.js scan-skill skills/",
     "gate:check": "node bin/asef.js gate-check"

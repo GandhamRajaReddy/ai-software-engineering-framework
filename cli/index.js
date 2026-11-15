@@ -9,6 +9,7 @@ const { scanDirectory, scanFile, formatReportMarkdown } = require('./skillspecto
 const { runVerificationCommand, verifyFilesystemGrounding, formatVerificationReport } = require('./verification-engine');
 const { detectDrift, formatDriftReportMarkdown } = require('./drift-detector');
 const { checkReleaseGate, formatReleaseGateMarkdown } = require('./release-gate-checker');
+const { OrchestrationEngine, STAGES } = require('./orchestration-engine');
 
 function printHelp() {
   console.log(`
@@ -19,28 +20,36 @@ function printHelp() {
 
 Usage: asef <command> [options]
 
-Commands:
-  init [targetDir]               Scaffold the 6-stage lifecycle & contracts in a project
-  evaluate-stack [options]       Evaluate user-proposed stack vs optimal architecture
-  verify [testCommand]           Execute tests and collect audit-grade verification evidence
-  scan-skill <path>              Scan skills, MCP configs, or prompts with NVIDIA SkillSpector
-  drift-detect [specFile]        Detect architectural drift between design spec and source code
-  gate-check [projectDir]        Audit project against the 7 production readiness release gates
-  version                        Print version information
+Core Workflow Commands (Orchestration Engine):
+  pipeline start [--problem "..."]  Start a structured lifecycle pipeline run
+  pipeline advance                  Validate current stage gates and advance to next stage
+  pipeline status                   Display living status, active stage, and mermaid chart
+  pipeline rollback <stageIndex>    Rollback to an earlier stage with safe context recovery
+  pipeline auto-run                 Automated end-to-end verification across all 7 stages
+
+Tool & Audit Commands:
+  init [targetDir]                  Scaffold the 6-stage lifecycle & contracts in a project
+  evaluate-stack [options]          Evaluate user-proposed stack vs optimal architecture
+  verify [testCommand]              Execute tests and collect audit-grade verification evidence
+  scan-skill <path>                 Scan skills, MCP configs, or prompts with NVIDIA SkillSpector
+  drift-detect [specFile]           Detect architectural drift between design spec and source code
+  gate-check [projectDir]           Audit project against the 7 production readiness release gates
+  version                           Print version information
 
 Options for evaluate-stack:
-  --proposed <name>              e.g. mern, modern-ts-fullstack, fastapi-postgres, go-microservice
-  --acid <true|false>            Require ACID transactions (default: true)
-  --seo <true|false>             Require Server-Side Rendering / SEO (default: true)
-  --rps <number>                 Target requests per second (default: 1000)
-  --ai <true|false>              Require native AI/ML integration (default: false)
+  --proposed <name>                 e.g. mern, modern-ts-fullstack, fastapi-postgres, go-microservice
+  --acid <true|false>               Require ACID transactions (default: true)
+  --seo <true|false>                Require Server-Side Rendering / SEO (default: true)
+  --rps <number>                    Target requests per second (default: 1000)
+  --ai <true|false>                 Require native AI/ML integration (default: false)
 
 Examples:
-  $ asef init my-new-project
+  $ asef pipeline start --problem "Build a privacy-first URL shortener"
+  $ asef pipeline advance
+  $ asef pipeline status
   $ asef evaluate-stack --proposed mern --acid true --seo true
   $ asef verify "npm test"
   $ asef scan-skill skills/
-  $ asef drift-detect 01_requirements.md
   $ asef gate-check .
 `);
 }
@@ -146,6 +155,79 @@ function handleGateCheck(projectDir = '.') {
   return result;
 }
 
+function handlePipeline(args = []) {
+  const engine = new OrchestrationEngine(process.cwd());
+  const subCommand = args[0] ? args[0].toLowerCase() : 'status';
+
+  switch (subCommand) {
+    case 'start': {
+      let problem = '';
+      let stack = 'mern';
+      if (args.includes('--problem')) {
+        problem = args[args.indexOf('--problem') + 1] || '';
+      }
+      if (args.includes('--stack')) {
+        stack = args[args.indexOf('--stack') + 1] || 'mern';
+      }
+
+      const res = engine.startPipeline(problem, { proposedStack: stack });
+      console.log(`\n🚀 Orchestration Pipeline Started: "${res.state.projectName}"`);
+      console.log(`📍 Current Stage: Stage 0 (${res.currentStage.name})`);
+      console.log(`👤 Assigned Agent: ${res.currentStage.agent}`);
+      console.log(`\n${res.handoff}`);
+      return res;
+    }
+
+    case 'advance':
+    case 'next': {
+      const res = engine.advanceStage();
+      if (res.success) {
+        if (res.completed) {
+          console.log(`\n🎉 ${res.message}`);
+        } else {
+          console.log(`\n✅ Gate Passed! Transitioned from Stage ${res.previousStage.index} to Stage ${res.currentStage.index} (${res.currentStage.name})`);
+          console.log(`👤 Active Persona: ${res.currentStage.agent}`);
+          console.log(`\n${res.handoff}`);
+        }
+      } else {
+        console.error(`\n⛔ Gate Check Failed for Stage ${res.stage.index} (${res.stage.name}):`);
+        for (const err of res.remediation) {
+          console.error(`   - ❌ ${err}`);
+        }
+        console.log(`\nRemediate the failing items above before re-running "asef pipeline advance".`);
+      }
+      return res;
+    }
+
+    case 'rollback': {
+      const target = args[1] !== undefined ? parseInt(args[1], 10) : 0;
+      const res = engine.rollbackToStage(target);
+      console.log(`\n⏪ Pipeline Rolled Back to Stage ${res.currentStage.index} (${res.currentStage.name})`);
+      console.log(`👤 Active Persona: ${res.currentStage.agent}`);
+      console.log(`\n${res.handoff}`);
+      return res;
+    }
+
+    case 'status':
+    default: {
+      const state = engine.getState();
+      console.log(`\n📊 Pipeline Status: ${state.projectName}`);
+      console.log(`   Overall Status: ${state.status}`);
+      console.log(`   Current Stage:  Stage ${state.currentStageIndex} (${STAGES[state.currentStageIndex].name})`);
+      console.log(`   Active Persona: ${STAGES[state.currentStageIndex].agent}\n`);
+      console.log(`Stage Breakdown:`);
+      for (const s of state.stages) {
+        const icon = s.status === 'COMPLETED' ? '✅' :
+                     s.status === 'IN_PROGRESS' ? '🔵' :
+                     s.status === 'FAILED' ? '🔴' : '⚪';
+        console.log(`   ${icon} Stage ${s.index}: ${s.name} [${s.status}]`);
+      }
+      console.log(`\nLiving dashboard updated in ACTIVE_PIPELINE.md`);
+      return state;
+    }
+  }
+}
+
 module.exports = {
   printHelp,
   handleInit,
@@ -153,5 +235,6 @@ module.exports = {
   handleVerify,
   handleScanSkill,
   handleDriftDetect,
-  handleGateCheck
+  handleGateCheck,
+  handlePipeline
 };

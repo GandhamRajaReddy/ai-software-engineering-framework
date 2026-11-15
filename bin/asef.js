@@ -11,13 +11,19 @@ const {
   handleVerify,
   handleScanSkill,
   handleDriftDetect,
-  handleGateCheck
+  handleGateCheck,
+  handlePipeline
 } = require('../cli/index');
 
 const args = process.argv.slice(2);
 const command = args[0] ? args[0].toLowerCase() : 'help';
 
 switch (command) {
+  case 'pipeline':
+  case 'orchestrate':
+    handlePipeline(args.slice(1));
+    break;
+
   case 'init':
     handleInit(args[1]);
     break;
