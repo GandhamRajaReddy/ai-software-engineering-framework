@@ -1,0 +1,7 @@
+# Cursor IDE Rules — AI Software Engineering Framework
+- Universal Entrypoint: Always read `AI_ENTRYPOINT.md` to identify the active lifecycle stage.
+- Anti-Hallucination: Verify every file on disk before editing. Never guess imports or function signatures.
+- Evidence Before Claims: Execute verification commands before claiming a task or bug fix is complete.
+- Surgical Changes: Limit edits to the active task contract. Bug fixes must be <= 25 lines.
+- Full Output: Never generate placeholder comments (`// ... existing code ...`).
+- Release Gate: No code is marked production-ready until `node bin/asef.js gate-check .` reports 100/100.

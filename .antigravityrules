@@ -1,0 +1,6 @@
+# Antigravity IDE Rules — AI Software Engineering Framework
+- Universal Entrypoint: Always read `AI_ENTRYPOINT.md` first.
+- Anti-Hallucination: Ground all file paths, exports, and imports against the physical filesystem.
+- Evidence Before Claims: Execute verification tests before declaring work complete.
+- Architecture: Always run `asef evaluate-stack` when considering or challenging tech choices.
+- Release Gates: All 7 gates must pass before tagging production ready.

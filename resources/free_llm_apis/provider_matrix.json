@@ -1,0 +1,67 @@
+{
+  "version": "1.0.0",
+  "lastUpdated": "2026-11-15",
+  "description": "Curated registry of official, zero-cost and free-tier LLM API providers for AI software engineering.",
+  "providers": [
+    {
+      "id": "google-gemini",
+      "name": "Google Gemini API (Free Tier)",
+      "baseUrl": "https://generativelanguage.googleapis.com/v1beta",
+      "authHeader": "x-goog-api-key",
+      "keyDashboard": "https://aistudio.google.com/app/apikey",
+      "defaultModel": "gemini-2.0-flash",
+      "contextWindow": 1048576,
+      "rateLimit": "15 RPM / 1,500 RPD",
+      "cost": "Free (No credit card required)",
+      "strengths": ["Massive 1M token context", "Fast multimodal reasoning", "Generous free quota"]
+    },
+    {
+      "id": "groq",
+      "name": "Groq Cloud (Free Tier)",
+      "baseUrl": "https://api.groq.com/openai/v1",
+      "authHeader": "Authorization: Bearer <GROQ_API_KEY>",
+      "keyDashboard": "https://console.groq.com/keys",
+      "defaultModel": "llama-3.3-70b-versatile",
+      "contextWindow": 128000,
+      "rateLimit": "30 RPM / 14,400 RPD",
+      "cost": "Free",
+      "strengths": ["Ultra-fast inference (500+ tokens/sec)", "OpenAI compatible", "High quality open weights"]
+    },
+    {
+      "id": "openrouter-free",
+      "name": "OpenRouter (Free Models)",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "authHeader": "Authorization: Bearer <OPENROUTER_API_KEY>",
+      "keyDashboard": "https://openrouter.ai/keys",
+      "defaultModel": "meta-llama/llama-3.3-70b-instruct:free",
+      "contextWindow": 131072,
+      "rateLimit": "20 RPM",
+      "cost": "Free models tagged with :free",
+      "strengths": ["Aggregates 20+ free community models", "OpenAI drop-in compatibility"]
+    },
+    {
+      "id": "github-models",
+      "name": "GitHub Models (Free Tier)",
+      "baseUrl": "https://models.inference.ai.azure.com",
+      "authHeader": "Authorization: Bearer <GITHUB_PAT>",
+      "keyDashboard": "https://github.com/marketplace/models",
+      "defaultModel": "gpt-4o-mini",
+      "contextWindow": 128000,
+      "rateLimit": "15 RPM / 150 RPD",
+      "cost": "Free with personal GitHub account",
+      "strengths": ["Access to GPT-4o-mini and Phi-4 via GitHub token"]
+    },
+    {
+      "id": "mistral-free",
+      "name": "Mistral AI (La Plateforme Experimentation)",
+      "baseUrl": "https://api.mistral.ai/v1",
+      "authHeader": "Authorization: Bearer <MISTRAL_API_KEY>",
+      "keyDashboard": "https://console.mistral.ai/api-keys/",
+      "defaultModel": "mistral-small-latest",
+      "contextWindow": 32768,
+      "rateLimit": "1 RPS / 500k TPM",
+      "cost": "Free experimentation tier",
+      "strengths": ["Fast European-hosted model with excellent coding accuracy"]
+    }
+  ]
+}

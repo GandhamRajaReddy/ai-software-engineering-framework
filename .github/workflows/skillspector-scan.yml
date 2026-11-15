@@ -1,0 +1,25 @@
+name: NVIDIA SkillSpector Security Gate
+
+on:
+  pull_request:
+    paths:
+      - 'skills/**'
+      - 'agents/**'
+      - '.mcp.json'
+
+jobs:
+  skillspector:
+    name: SkillSpector AI Safety Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Execute SkillSpector Scanner
+        run: node bin/asef.js scan-skill skills/

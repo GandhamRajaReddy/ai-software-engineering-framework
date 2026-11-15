@@ -1,0 +1,39 @@
+{
+  "name": "@gandhamrajareddy/ai-software-engineering-framework",
+  "version": "1.0.0",
+  "description": "A reusable, anti-hallucination, evidence-based AI Software Engineering Framework that turns problem statements into tested, secure, and production-ready software.",
+  "author": "Gandham Raja Reddy <gandhamrajareddy2@gmail.com>",
+  "license": "MIT",
+  "homepage": "https://github.com/GandhamRajaReddy/ai-software-engineering-framework",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/GandhamRajaReddy/ai-software-engineering-framework.git"
+  },
+  "keywords": [
+    "ai-agents",
+    "software-engineering",
+    "anti-hallucination",
+    "claude-code",
+    "cursor",
+    "antigravity",
+    "tdd",
+    "code-generation",
+    "skillspector",
+    "token-optimization",
+    "evidence-based-architecture"
+  ],
+  "main": "cli/index.js",
+  "bin": {
+    "asef": "./bin/asef.js"
+  },
+  "type": "commonjs",
+  "scripts": {
+    "test": "node --test tests/cli.test.js tests/skillspector.test.js tests/stack-evaluator.test.js tests/verification.test.js",
+    "lint": "node bin/asef.js verify --lint-only",
+    "scan:skills": "node bin/asef.js scan-skill skills/",
+    "gate:check": "node bin/asef.js gate-check"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

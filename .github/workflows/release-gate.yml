@@ -1,0 +1,23 @@
+name: Production Readiness Release Gate
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  gate-audit:
+    name: 7 Iron-Clad Release Gates
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Verify Release Gates
+        run: node bin/asef.js gate-check .

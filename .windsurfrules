@@ -1,0 +1,6 @@
+# Windsurf Rules — AI Software Engineering Framework
+- Universal Entrypoint: Consult `AI_ENTRYPOINT.md` before initiating any stage.
+- Evidence-Based Verification: Never report a task complete without running the verification command.
+- Traceability: Every requirement must have an explicit ID (REQ-001) mapped to tests.
+- Minimal Scope: Limit code changes strictly to the active task contract. Bug fixes <= 25 lines.
+- Zero Slop: No placeholder comments or incomplete code chunks.

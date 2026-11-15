@@ -1,0 +1,69 @@
+{
+  "version": "1.0.0",
+  "maintainer": "GandhamRajaReddy",
+  "description": "Vetted, production-grade free and public APIs suitable for AI software development.",
+  "categories": [
+    {
+      "name": "Geocoding & Maps",
+      "apis": [
+        {
+          "name": "Nominatim OpenStreetMap",
+          "url": "https://nominatim.openstreetmap.org",
+          "auth": "None (Requires User-Agent header)",
+          "cors": "Yes",
+          "description": "Forward and reverse geocoding of addresses and coordinates worldwide."
+        },
+        {
+          "name": "IP-API",
+          "url": "http://ip-api.com/json/",
+          "auth": "None (Free tier 45 req/min)",
+          "cors": "Yes",
+          "description": "IP geolocation and ASN lookup."
+        }
+      ]
+    },
+    {
+      "name": "Weather & Environment",
+      "apis": [
+        {
+          "name": "Open-Meteo",
+          "url": "https://api.open-meteo.com/v1/forecast",
+          "auth": "None",
+          "cors": "Yes",
+          "description": "High-accuracy hourly and daily weather forecasts without API keys."
+        }
+      ]
+    },
+    {
+      "name": "Finance & Currency Exchange",
+      "apis": [
+        {
+          "name": "ExchangeRate-API Open Access",
+          "url": "https://open.er-api.com/v6/latest/USD",
+          "auth": "None",
+          "cors": "Yes",
+          "description": "Real-time foreign currency exchange rates across 160+ fiat currencies."
+        }
+      ]
+    },
+    {
+      "name": "Developer Utilities & Mock Data",
+      "apis": [
+        {
+          "name": "JSONPlaceholder",
+          "url": "https://jsonplaceholder.typicode.com",
+          "auth": "None",
+          "cors": "Yes",
+          "description": "Fake online REST API for prototyping CRUD endpoints."
+        },
+        {
+          "name": "HTTPBin",
+          "url": "https://httpbin.org",
+          "auth": "None",
+          "cors": "Yes",
+          "description": "HTTP request and response inspection service."
+        }
+      ]
+    }
+  ]
+}
