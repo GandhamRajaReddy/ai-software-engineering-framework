@@ -104,3 +104,19 @@ node bin/asef.js pipeline rollback 2
 ```
 - Reverts to Stage 2 (`02_ARCHITECTURE`) if tests fail or assumptions require architectural re-evaluation.
 - Resets downstream stages to `PENDING` to prevent stale contract execution.
+
+---
+
+## 4. Stack-Specific Backend Skills Binding
+
+The Orchestration Engine dynamically injects stack-specific backend engineering skills into agent prompts based on the evaluated or chosen stack.
+
+| Evaluated Stack | Bound Backend Skills | Bound Architecture & Quality Skills |
+|:----------------|:---------------------|:-----------------------------------|
+| **Python FastAPI** (`fastapi-postgres`) | `fastapi-engineering` | `database-engineering`, `database-migrations`, `caching-performance`, `backend-security`, `backend-testing`, `async-background-processing`, `backend-observability` |
+| **Python Django / DRF** (`django-drf`) | `django-drf-engineering` | `database-engineering`, `database-migrations`, `caching-performance`, `backend-security`, `backend-testing`, `async-background-processing`, `backend-observability` |
+| **Go Microservices** (`go-microservice`) | `golang-backend-engineering` | `microservices-engineering`, `backend-architecture`, `backend-security`, `backend-testing`, `backend-observability`, `database-engineering` |
+| **Java Spring Boot 3** (`springboot-enterprise`) | `springboot-engineering` | `microservices-engineering`, `backend-architecture`, `backend-security`, `backend-testing`, `database-engineering`, `database-migrations` |
+| **Node.js / TypeScript** (`modern-ts-fullstack`) | `nodejs-backend-engineering` | `database-engineering`, `database-migrations`, `backend-security`, `backend-testing`, `api-design-principles`, `frontend-design`, `brandkit` |
+| **Node.js / Express** (`mern`) | `nodejs-backend-engineering` | `database-engineering`, `backend-security`, `backend-testing`, `api-design-principles`, `frontend-design` |
+

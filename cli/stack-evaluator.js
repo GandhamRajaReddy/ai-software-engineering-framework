@@ -35,7 +35,15 @@ const PRESET_STACKS = {
       devVelocity: 8,
       ecosystemMaturity: 9,
       dataRelationalIntegrity: 3
-    }
+    },
+    recommendedSkills: [
+      'nodejs-backend-engineering',
+      'database-engineering',
+      'backend-security',
+      'backend-testing',
+      'api-design-principles',
+      'frontend-design'
+    ]
   },
   'modern-ts-fullstack': {
     name: 'Modern TypeScript Stack (Next.js / Remix, PostgreSQL, Drizzle/Prisma, Tailwind)',
@@ -62,7 +70,17 @@ const PRESET_STACKS = {
       devVelocity: 9,
       ecosystemMaturity: 9,
       dataRelationalIntegrity: 10
-    }
+    },
+    recommendedSkills: [
+      'nodejs-backend-engineering',
+      'database-engineering',
+      'database-migrations',
+      'backend-security',
+      'backend-testing',
+      'api-design-principles',
+      'frontend-design',
+      'brandkit'
+    ]
   },
   'fastapi-postgres': {
     name: 'Python High-Performance Stack (FastAPI, PostgreSQL, Redis, React/Vite)',
@@ -89,7 +107,54 @@ const PRESET_STACKS = {
       devVelocity: 8,
       ecosystemMaturity: 9,
       dataRelationalIntegrity: 9
-    }
+    },
+    recommendedSkills: [
+      'fastapi-engineering',
+      'database-engineering',
+      'database-migrations',
+      'caching-performance',
+      'backend-security',
+      'backend-testing',
+      'async-background-processing',
+      'backend-observability'
+    ]
+  },
+  'django-drf': {
+    name: 'Python Batteries-Included Stack (Django 5, DRF, PostgreSQL, Celery, Redis)',
+    frontend: 'Django Templates / HTMX or React SPA',
+    backend: 'Django & Django REST Framework (DRF)',
+    database: 'PostgreSQL',
+    orm: 'Django ORM',
+    deployment: 'Docker / AWS ECS / Gunicorn + Nginx',
+    strengths: [
+      'Batteries-included admin dashboard, authentication, ORM, and migrations',
+      'Mature ecosystem with high security defaults (CSRF, clickjacking, SQL injection)',
+      'Asynchronous task processing via Celery and Redis',
+      'High developer velocity for complex domain models'
+    ],
+    weaknesses: [
+      'Monolithic framework overhead',
+      'Synchronous ORM history requiring asgiref for async views'
+    ],
+    suitability: {
+      acidTransactions: 10,
+      seoPerformance: 8,
+      typeSafety: 7,
+      highConcurrency: 7,
+      devVelocity: 9,
+      ecosystemMaturity: 10,
+      dataRelationalIntegrity: 10
+    },
+    recommendedSkills: [
+      'django-drf-engineering',
+      'database-engineering',
+      'database-migrations',
+      'caching-performance',
+      'backend-security',
+      'backend-testing',
+      'async-background-processing',
+      'backend-observability'
+    ]
   },
   'go-microservice': {
     name: 'Go High-Throughput Stack (Go Gin/Chi, PostgreSQL, Redis, React/HTMX)',
@@ -117,7 +182,52 @@ const PRESET_STACKS = {
       devVelocity: 6,
       ecosystemMaturity: 8,
       dataRelationalIntegrity: 9
-    }
+    },
+    recommendedSkills: [
+      'golang-backend-engineering',
+      'microservices-engineering',
+      'backend-architecture',
+      'backend-security',
+      'backend-testing',
+      'backend-observability',
+      'database-engineering'
+    ]
+  },
+  'springboot-enterprise': {
+    name: 'Java Enterprise Stack (Spring Boot 3, Spring Data JPA, PostgreSQL, Docker)',
+    frontend: 'Angular / React or Thymeleaf',
+    backend: 'Spring Boot 3 (Java 21 Virtual Threads, Spring MVC)',
+    database: 'PostgreSQL / MySQL',
+    orm: 'Hibernate / Spring Data JPA',
+    deployment: 'Docker / Kubernetes / AWS EKS',
+    strengths: [
+      'Enterprise standard with battle-tested dependency injection and transactional management',
+      'High throughput using Java 21 Virtual Threads (Project Loom)',
+      'Rich observability via Micrometer, Actuator, and OpenTelemetry',
+      'Comprehensive security integration via Spring Security'
+    ],
+    weaknesses: [
+      'Higher memory consumption (JVM baseline ~250MB)',
+      'Slower startup time compared to Go or Node.js without GraalVM Native Image'
+    ],
+    suitability: {
+      acidTransactions: 10,
+      seoPerformance: 7,
+      typeSafety: 10,
+      highConcurrency: 9,
+      devVelocity: 7,
+      ecosystemMaturity: 10,
+      dataRelationalIntegrity: 10
+    },
+    recommendedSkills: [
+      'springboot-engineering',
+      'microservices-engineering',
+      'backend-architecture',
+      'backend-security',
+      'backend-testing',
+      'database-engineering',
+      'database-migrations'
+    ]
   }
 };
 

@@ -117,6 +117,28 @@ class AgentExecutionAdapter {
       prompt += `## Input Specification from Prior Stage\n${context.priorArtifactContent}\n\n`;
     }
 
+    // Stack-Specific Backend & Architecture Skills Binding
+    const stackKey = context.selectedStack || (context.evaluatedStack && context.evaluatedStack.recommendedStack ? context.evaluatedStack.recommendedStack.stack : null);
+    if (context.backendSkills && context.backendSkills.length > 0) {
+      prompt += `## Active Stack-Specific Backend Skills\n`;
+      prompt += `Apply the engineering standards and patterns from the following active skills:\n`;
+      for (const skill of context.backendSkills) {
+        prompt += `- \`skills/${skill}/SKILL.md\`\n`;
+      }
+      prompt += `\n`;
+    } else if (stackKey) {
+      const { PRESET_STACKS } = require('./stack-evaluator');
+      const stackPreset = typeof stackKey === 'string' ? PRESET_STACKS[stackKey] : stackKey;
+      if (stackPreset && stackPreset.recommendedSkills) {
+        prompt += `## Active Stack-Specific Backend Skills (${stackPreset.name})\n`;
+        prompt += `Follow strict idiomatic implementation for this stack using the following skills:\n`;
+        for (const skill of stackPreset.recommendedSkills) {
+          prompt += `- \`skills/${skill}/SKILL.md\`\n`;
+        }
+        prompt += `\n`;
+      }
+    }
+
     prompt += `## Strict Output Requirements\n`;
     prompt += `1. Follow the Ponytail & Karpathy principles: surgical, minimal, zero unnecessary code.\n`;
     prompt += `2. If writing code, provide full complete implementations without placeholders like "// ... rest of code".\n`;

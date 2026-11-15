@@ -161,9 +161,39 @@ node bin/asef.js evaluate-stack --proposed mern --acid true --seo true --rps 200
 |:----:|:---------------------|:-----:|:--------------|
 | #1 | Modern TypeScript (Next.js, PostgreSQL, Drizzle, Tailwind) | 76/100 | Relational ACID foreign keys & Server-Side SEO |
 | #2 | Python High-Performance (FastAPI, PostgreSQL, Redis) | 70/100 | Async I/O, OpenAPI docs, and native AI integration |
-| #3 | Go High-Throughput (Go Gin, PostgreSQL, Redis) | 69/100 | Sub-millisecond p99 latency & <20MB RAM footprint |
-| #4 | MERN Stack (MongoDB, Express, React SPA, Node.js) | 41/100 | Rapid JSON prototyping, but lacks ACID & fails SEO |
+| #3 | Python Batteries-Included (Django 5, DRF, PostgreSQL, Celery) | 68/100 | Admin dashboard, ORM security defaults, background jobs |
+| #4 | Go High-Throughput (Go Gin, PostgreSQL, Redis) | 69/100 | Sub-millisecond p99 latency & <20MB RAM footprint |
+| #5 | Java Enterprise (Spring Boot 3, Spring Data JPA, Docker) | 65/100 | Enterprise dependency injection & Virtual Threads |
+| #6 | MERN Stack (MongoDB, Express, React SPA, Node.js) | 41/100 | Rapid JSON prototyping, but lacks ACID & fails SEO |
 ```
+
+---
+
+## 🏗️ Stack-Neutral Backend Engineering Skill Family
+
+Our framework is strictly **stack-neutral** and does not assume every backend uses Node.js or Express. It includes a comprehensive, independently selectable suite of 15 backend skills organized across four engineering pillars:
+
+```text
+ ┌────────────────────────────────────────────────────────────────────────┐
+ │                   BACKEND ENGINEERING SKILL FAMILY                     │
+ ├────────────────────────────────┬───────────────────────────────────────┤
+ │ 1. Backend Architecture        │ 2. Stack-Specific Implementation      │
+ │ • backend-architecture (Clean) │ • fastapi-engineering (Python)        │
+ │ • api-design-principles (REST) │ • django-drf-engineering (Python)     │
+ │ • microservices-engineering    │ • golang-backend-engineering (Go)     │
+ │                                │ • springboot-engineering (Java)       │
+ │                                │ • nodejs-backend-engineering (Node/TS)│
+ ├────────────────────────────────┼───────────────────────────────────────┤
+ │ 3. Data Engineering            │ 4. Backend Quality & Infrastructure   │
+ │ • database-engineering         │ • backend-security (OWASP Top 10)     │
+ │   (PostgreSQL, MySQL, MongoDB) │ • backend-testing (TDD, Rollbacks)    │
+ │ • database-migrations          │ • async-background-processing (Queues)│
+ │ • caching-performance (Redis)  │ • backend-observability (OpenTelemetry│
+ └────────────────────────────────┴───────────────────────────────────────┘
+```
+
+When a stack is chosen or evaluated, the Orchestration Engine dynamically binds the exact stack-specific backend skill into the specialist agent's prompt, preventing generic Express guidance from being fed into a FastAPI or Go project.
+
 
 ---
 

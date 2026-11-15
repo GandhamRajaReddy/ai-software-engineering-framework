@@ -403,6 +403,19 @@ class OrchestrationEngine {
         break;
     }
 
+    // Include recommended stack-specific backend skills in handoff for stages 02, 03, 04, 05
+    const stackKey = state.selectedStack || state.proposedStack;
+    if (stackKey && [2, 3, 4, 5].includes(stageIndex)) {
+      const { PRESET_STACKS } = require('./stack-evaluator');
+      const preset = PRESET_STACKS[stackKey];
+      if (preset && preset.recommendedSkills) {
+        handoff += `\n## Recommended Backend Skills for Stack (\`${preset.name}\`)\n`;
+        for (const sk of preset.recommendedSkills) {
+          handoff += `- \`skills/${sk}/SKILL.md\`\n`;
+        }
+      }
+    }
+
     handoff += `\n## Command to Advance Stage When Complete\n`;
     handoff += `\`\`\`bash\nnode bin/asef.js pipeline advance\n\`\`\`\n`;
 
@@ -491,6 +504,8 @@ class OrchestrationEngine {
     const execResult = await adapter.executeStage(targetStageIndex, {
       problemStatement: state.problemStatement,
       priorArtifactContent: priorContent,
+      selectedStack: state.selectedStack || state.proposedStack || 'mern',
+      backendSkills: state.backendSkills || options.backendSkills,
       testCommand: options.testCommand || 'npm test'
     });
 
