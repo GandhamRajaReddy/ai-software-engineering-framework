@@ -173,6 +173,41 @@ test('Control Plane: Strictly fail-closed independent verification rejects unver
   assert.ok(transitions.includes(TASK_STATES.FAILED));
 });
 
+test('Control Plane: Strict verification rejects ungrounded worker verificationResult lacking command and exitCode: 0', async () => {
+  const dag = new TaskDagScheduler({ maxRetries: 0, requireIndependentVerification: true });
+  dag.addTask({ id: 'TASK-FAKE-VERIFY', targetFiles: [] });
+
+  // Worker returns ungrounded { passed: true } without executable command evidence
+  const results = await dag.runBatchWithWorkerPool([dag.tasks.get('TASK-FAKE-VERIFY')], async () => {
+    return {
+      generatedCode: 'const y = 2;',
+      verificationResult: { passed: true } // missing command and exitCode: 0!
+    };
+  });
+
+  assert.strictEqual(results[0].success, false);
+  assert.strictEqual(results[0].status, TASK_STATES.FAILED);
+  assert.match(results[0].error, /missing proof of executable verification/);
+
+  // Now test with verified grounded evidence (command + exitCode: 0)
+  const validDag = new TaskDagScheduler({ maxRetries: 0, requireIndependentVerification: true });
+  validDag.addTask({ id: 'TASK-GROUNDED-VERIFY', targetFiles: [] });
+  const validResults = await validDag.runBatchWithWorkerPool([validDag.tasks.get('TASK-GROUNDED-VERIFY')], async () => {
+    return {
+      generatedCode: 'const y = 2;',
+      verificationResult: {
+        passed: true,
+        command: 'npm test',
+        exitCode: 0,
+        testsPassed: 6
+      }
+    };
+  });
+
+  assert.strictEqual(validResults[0].success, true);
+  assert.strictEqual(validResults[0].status, TASK_STATES.COMPLETED);
+});
+
 test('Control Plane: Independent verification procedure rejects faulty outputs and moves to REJECTED', async () => {
   const dag = new TaskDagScheduler({ maxRetries: 1, baseBackoffMs: 10 });
   dag.addTask({

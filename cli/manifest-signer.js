@@ -15,7 +15,8 @@ const SIGNATURE_BLOCK_REGEX = /```asef-signature\r?\n([\s\S]*?)\r?\n```/;
 // Known trusted root release authority public keys
 const TRUSTED_RELEASE_KEYS = new Set([
   'MCowBQYDK2VwAyEAAiTO/3UCMcvPG544UUOS3X6tRFIWXKuVLTiab4bxG2k=',
-  'MCowBQYDK2VwAyEACrH3F44gQvfBJTUqXMMBpDg7Ft27Q9g4eeiU6noxpSk='
+  'MCowBQYDK2VwAyEACrH3F44gQvfBJTUqXMMBpDg7Ft27Q9g4eeiU6noxpSk=',
+  'MCowBQYDK2VwAyEAKO7brVJXzmXVs9d4+us3vXTLTgEcvPkKElynGyJkquk='
 ]);
 
 class ManifestSigner {

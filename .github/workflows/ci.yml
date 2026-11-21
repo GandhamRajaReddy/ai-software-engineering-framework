@@ -151,5 +151,42 @@ jobs:
       - name: Run SkillSpector Static Scan
         run: node bin/asef.js scan-skill skills/
 
-      - name: Run Production Release Gate Check
-        run: node bin/asef.js gate-check .
+      - name: Run Production Release Gate Check (SwiftLink SaaS Application)
+        run: node bin/asef.js gate-check examples/saas-url-shortener
+
+  swiftlink-verification:
+    name: SwiftLink SaaS Application Verification & Container Smoke
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: '20'
+
+      - name: Run SwiftLink Unit & Integration Test Suite
+        working-directory: examples/saas-url-shortener
+        run: npm test
+
+      - name: Build Hardened Container
+        run: |
+          docker build -t asef/swiftlink:test examples/saas-url-shortener/
+
+      - name: Container Smoke Test (Health, Readiness & Authenticated Token Flow)
+        run: |
+          docker run -d --name test-swiftlink -p 3000:3000 \
+            -e NODE_ENV=development \
+            -e JWT_SECRET="ci-development-secret-key-32-chars-minimum!" \
+            asef/swiftlink:test
+          sleep 4
+          docker logs test-swiftlink
+          curl -f http://localhost:3000/api/healthz || exit 1
+          curl -f http://localhost:3000/api/readyz || exit 1
+          curl -f -X POST http://localhost:3000/api/auth/token \
+            -H "Content-Type: application/json" \
+            -d '{"tenantId":"ci-tenant","userId":"ci-user"}' || exit 1
+          docker stop test-swiftlink

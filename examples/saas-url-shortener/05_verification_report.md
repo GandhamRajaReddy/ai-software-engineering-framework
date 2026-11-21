@@ -1,7 +1,7 @@
 # Verification Evidence Report: SwiftLink Enterprise
 
 > **Report ID:** VER-SWIFTLINK-v1.0.0  
-> **Timestamp:** 2026-11-15T11:00:00Z  
+> **Timestamp:** 2026-11-21T15:20:00Z  
 > **Auditors:** `Test Lead` & `Security Auditor`  
 > **Status:** APPROVED  
 > **Reviewed By:** Senior Test Lead & Independent Security Auditor  
@@ -13,23 +13,28 @@
 ## 1. Test Execution Evidence
 
 ```bash
-$ npm test -- --coverage
+$ npm test
 ```
 
 ```
 > swiftlink-enterprise@1.0.0 test
-> vitest run --coverage
+> node --test tests/shortener.test.js
 
- ✓ tests/unit/slug.test.ts (4 tests) 142ms
- ✓ tests/unit/password.test.ts (3 tests) 310ms
- ✓ tests/integration/redirect.test.ts (6 tests) 280ms
- ✓ tests/integration/links-api.test.ts (5 tests) 210ms
- ✓ tests/security/rate-limit.test.ts (3 tests) 180ms
+✔ Slug Engine: Base62 generation produces unguessable valid slugs (1.4445ms)
+✔ Security: URL Sanitizer allows legitimate HTTP/HTTPS and blocks SSRF/bad protocols (0.6718ms)
+✔ Link Store: Link creation, collision prevention, and cached destination lookup (1.6189ms)
+✔ Telemetry: Click tracking and GDPR hashed IP analytics (2.0537ms)
+✔ Authentication & Tenant Boundary: Tokens, Spoofing Defense & Isolation (7.4027ms)
+✔ E2E HTTP Server: Endpoints, Public 302 Redirect, and Health Check (2.7693ms)
+ℹ tests 6
+ℹ suites 0
+ℹ pass 6
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 137.9289
 
- Test Files  5 passed (5)
-      Tests  21 passed (21)
-   Duration  1.12s
-   Coverage  Lines: 94.2%, Functions: 96.0%, Branches: 91.5%
 Exit code: 0
 ```
 
@@ -45,7 +50,7 @@ $ node bin/asef.js scan-skill .
 # SkillSpector Security Audit Report
 > Audit Engine: NVIDIA SkillSpector Static Analysis Protocol v1.0
 > Status: ✅ PASSED (Safe to load)
-> Files Scanned: 24
+> Files Scanned: 6
 
 ## Vulnerability Summary
 | Severity | Count | Gate Policy |
@@ -60,7 +65,10 @@ $ node bin/asef.js scan-skill .
 ---
 
 ## 3. Filesystem Grounding Verification
-- `src/lib/slug.ts`: Verified on disk (612 bytes).
-- `src/db/schema.ts`: Verified on disk (1,480 bytes).
-- `src/middleware/rate-limit.ts`: Verified on disk (890 bytes).
+- `server.js`: Verified on disk.
+- `src/auth.js`: Verified on disk.
+- `src/slug.js`: Verified on disk.
+- `src/store.js`: Verified on disk.
+- `public/index.html`: Verified on disk.
+- `tests/shortener.test.js`: Verified on disk.
 - **Zero hallucinated files detected.**

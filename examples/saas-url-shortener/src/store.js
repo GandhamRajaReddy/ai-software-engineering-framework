@@ -1,7 +1,8 @@
 /**
- * High-Performance In-Memory & File-Backed Link Store
- * Delivers sub-5ms cached link resolution, collision avoidance, and GDPR-compliant
- * hashed IP click analytics.
+ * High-Performance Dual-Mode Link Store (PostgreSQL & In-Memory LRU)
+ * Supports real PostgreSQL ACID persistence when DATABASE_URL is configured,
+ * combined with in-memory LRU caching for sub-5ms redirects, collision avoidance,
+ * and GDPR-compliant hashed IP click analytics.
  */
 
 const fs = require('fs');
@@ -9,17 +10,74 @@ const path = require('path');
 const crypto = require('crypto');
 const { generateSlug, isValidSlug, sanitizeUrl } = require('./slug');
 
+let pg = null;
+try {
+  pg = require('pg');
+} catch (e) {
+  // pg driver is optional in lightweight test environments
+}
+
 class LinkStore {
   constructor(options = {}) {
     this.dataFile = options.dataFile || null;
+    this.databaseUrl = options.databaseUrl || process.env.DATABASE_URL || null;
     this.links = new Map(); // slug -> linkRecord
     this.clicks = []; // array of click events
     this.ipSalt = options.ipSalt || crypto.randomBytes(16).toString('hex');
     this.cache = new Map(); // LRU memory cache
     this.maxCacheSize = 5000;
+    this.pgPool = null;
 
-    if (this.dataFile && fs.existsSync(this.dataFile)) {
+    if (this.databaseUrl && pg) {
+      this.initPostgres();
+    } else if (this.dataFile && fs.existsSync(this.dataFile)) {
       this.loadFromFile();
+    }
+  }
+
+  /**
+   * Initializes PostgreSQL connection pool and ensures schema exists
+   */
+  async initPostgres() {
+    try {
+      this.pgPool = new pg.Pool({ connectionString: this.databaseUrl });
+      await this.pgPool.query(`
+        CREATE TABLE IF NOT EXISTS links (
+          slug VARCHAR(32) PRIMARY KEY,
+          destination_url TEXT NOT NULL,
+          tenant_id VARCHAR(64) NOT NULL,
+          created_by VARCHAR(64) NOT NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          clicks_count INT NOT NULL DEFAULT 0
+        );
+
+        CREATE TABLE IF NOT EXISTS clicks (
+          id SERIAL PRIMARY KEY,
+          slug VARCHAR(32) NOT NULL REFERENCES links(slug) ON DELETE CASCADE,
+          tenant_id VARCHAR(64) NOT NULL,
+          visitor_id VARCHAR(64) NOT NULL,
+          user_agent VARCHAR(256),
+          referer VARCHAR(256),
+          timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+      `);
+
+      // Warm up cache from PostgreSQL
+      const res = await this.pgPool.query('SELECT slug, destination_url, tenant_id, created_by, created_at, clicks_count FROM links');
+      for (const row of res.rows) {
+        const record = {
+          slug: row.slug,
+          destinationUrl: row.destination_url,
+          tenantId: row.tenant_id,
+          createdBy: row.created_by,
+          createdAt: row.created_at.toISOString ? row.created_at.toISOString() : row.created_at,
+          clicksCount: parseInt(row.clicks_count || '0', 10)
+        };
+        this.links.set(record.slug, record);
+        this.cache.set(record.slug, record.destinationUrl);
+      }
+    } catch (err) {
+      console.warn(`[LinkStore] PostgreSQL initialization warning: ${err.message}. Operating in memory mode.`);
     }
   }
 
@@ -70,13 +128,21 @@ class LinkStore {
 
     this.links.set(slug, record);
     this.cache.set(slug, record.destinationUrl);
-    this.persist();
 
+    // Asynchronously write to PostgreSQL if connected
+    if (this.pgPool) {
+      this.pgPool.query(
+        'INSERT INTO links (slug, destination_url, tenant_id, created_by, created_at, clicks_count) VALUES ($1, $2, $3, $4, $5, 0)',
+        [record.slug, record.destinationUrl, record.tenantId, record.createdBy, record.createdAt]
+      ).catch(e => console.error(`[LinkStore] PG write error: ${e.message}`));
+    }
+
+    this.persist();
     return record;
   }
 
   /**
-   * Resolves a slug to destination URL with cache check
+   * Resolves a slug to destination URL with cache check (sub-5ms)
    */
   getDestination(slug) {
     if (this.cache.has(slug)) {
@@ -112,6 +178,16 @@ class LinkStore {
     };
 
     this.clicks.push(clickRecord);
+
+    if (this.pgPool) {
+      this.pgPool.query('UPDATE links SET clicks_count = clicks_count + 1 WHERE slug = $1', [slug])
+        .catch(e => console.error(`[LinkStore] PG counter error: ${e.message}`));
+      this.pgPool.query(
+        'INSERT INTO clicks (slug, tenant_id, visitor_id, user_agent, referer, timestamp) VALUES ($1, $2, $3, $4, $5, $6)',
+        [clickRecord.slug, clickRecord.tenantId, clickRecord.visitorId, clickRecord.userAgent, clickRecord.referer, clickRecord.timestamp]
+      ).catch(e => console.error(`[LinkStore] PG click insert error: ${e.message}`));
+    }
+
     this.persist();
     return true;
   }
@@ -200,6 +276,12 @@ class LinkStore {
       }
     } catch (e) {
       // Fresh store on load error
+    }
+  }
+
+  async close() {
+    if (this.pgPool) {
+      await this.pgPool.end();
     }
   }
 }

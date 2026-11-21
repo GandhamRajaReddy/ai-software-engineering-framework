@@ -3,6 +3,7 @@ const assert = require('node:assert');
 const http = require('http');
 const { generateSlug, isValidSlug, sanitizeUrl } = require('../src/slug');
 const { LinkStore } = require('../src/store');
+const { createToken, verifyToken } = require('../src/auth');
 const { server, store } = require('../server');
 
 test('Slug Engine: Base62 generation produces unguessable valid slugs', () => {
@@ -108,7 +109,11 @@ function makeRequest(srv, { method = 'GET', url = '/', headers = {}, body = null
     });
     req.method = method;
     req.url = url;
-    req.headers = { host: 'localhost:3000', ...headers };
+    const normalizedHeaders = { host: 'localhost:3000' };
+    for (const [k, v] of Object.entries(headers)) {
+      normalizedHeaders[k.toLowerCase()] = v;
+    }
+    req.headers = normalizedHeaders;
     req.socket = { remoteAddress: '127.0.0.1' };
 
     let resBody = '';
@@ -141,36 +146,121 @@ function makeRequest(srv, { method = 'GET', url = '/', headers = {}, body = null
   });
 }
 
-test('E2E HTTP Server: Endpoints, 302 Redirect, and Health Check', async () => {
-  const dynamicSlug = 'fastapi-docs-' + Math.random().toString(36).slice(2, 8);
+test('Authentication & Tenant Boundary: Tokens, Spoofing Defense & Isolation', async () => {
+  // 1. Unauthenticated requests to protected endpoints return 401
+  const unauthRes = await makeRequest(server, {
+    method: 'POST',
+    url: '/api/links',
+    body: { url: 'https://example.com' }
+  });
+  assert.strictEqual(unauthRes.status, 401);
+  const unauthData = await unauthRes.json();
+  assert.match(unauthData.error, /Authentication required/);
 
-  // 1. Health check
-  const healthRes = await makeRequest(server, { method: 'GET', url: '/api/healthz' });
-  assert.strictEqual(healthRes.status, 200);
-  const healthData = await healthRes.json();
-  assert.strictEqual(healthData.status, 'ok');
+  // 2. Obtain token for Tenant A
+  const tokenARes = await makeRequest(server, {
+    method: 'POST',
+    url: '/api/auth/token',
+    body: { tenantId: 'tenant-acme', userId: 'alice' }
+  });
+  assert.strictEqual(tokenARes.status, 200);
+  const tokenAData = await tokenARes.json();
+  assert.strictEqual(tokenAData.tenantId, 'tenant-acme');
+  const tokenA = tokenAData.token;
 
-  // 2. Create link via POST /api/links
+  // 3. Obtain token for Tenant B
+  const tokenBRes = await makeRequest(server, {
+    method: 'POST',
+    url: '/api/auth/token',
+    body: { tenantId: 'tenant-beta', userId: 'bob' }
+  });
+  assert.strictEqual(tokenBRes.status, 200);
+  const tokenB = (await tokenBRes.json()).token;
+
+  // 4. Create link as Tenant A
+  const acmeSlug = 'acme-portal-' + Math.random().toString(36).slice(2, 8);
   const createRes = await makeRequest(server, {
     method: 'POST',
     url: '/api/links',
-    headers: { 'content-type': 'application/json', 'x-tenant-id': 'e2e-tenant' },
+    headers: { 'Authorization': `Bearer ${tokenA}` },
+    body: { url: 'https://acme.org/internal', customSlug: acmeSlug }
+  });
+  assert.strictEqual(createRes.status, 201);
+  const createdLink = await createRes.json();
+  assert.strictEqual(createdLink.tenantId, 'tenant-acme');
+
+  // 5. Tenant Spoofing Attempt: User with Token A supplies X-Tenant-ID: tenant-beta -> Rejected 403
+  const spoofRes = await makeRequest(server, {
+    method: 'POST',
+    url: '/api/links',
+    headers: {
+      'Authorization': `Bearer ${tokenA}`,
+      'X-Tenant-ID': 'tenant-beta'
+    },
+    body: { url: 'https://acme.org/spoof', customSlug: 'acme-spoof-' + Math.random().toString(36).slice(2, 8) }
+  });
+  assert.strictEqual(spoofRes.status, 403);
+  assert.match((await spoofRes.json()).error, /Tenant identity spoofing detected/);
+
+  // 6. Tenant B cannot see Tenant A's links in GET /api/links
+  const listBRes = await makeRequest(server, {
+    method: 'GET',
+    url: '/api/links',
+    headers: { 'Authorization': `Bearer ${tokenB}` }
+  });
+  assert.strictEqual(listBRes.status, 200);
+  const linksB = await listBRes.json();
+  assert.ok(linksB.every(l => l.slug !== acmeSlug));
+
+  // 7. Tenant B cannot see Tenant A's analytics
+  const analyticsBRes = await makeRequest(server, {
+    method: 'GET',
+    url: `/api/analytics/${acmeSlug}`,
+    headers: { 'Authorization': `Bearer ${tokenB}` }
+  });
+  assert.strictEqual(analyticsBRes.status, 404);
+});
+
+test('E2E HTTP Server: Endpoints, Public 302 Redirect, and Health Check', async () => {
+  const dynamicSlug = 'fastapi-docs-' + Math.random().toString(36).slice(2, 8);
+
+  // 1. Health & readiness checks (public)
+  const healthRes = await makeRequest(server, { method: 'GET', url: '/api/healthz' });
+  assert.strictEqual(healthRes.status, 200);
+  assert.strictEqual((await healthRes.json()).status, 'ok');
+
+  const readyRes = await makeRequest(server, { method: 'GET', url: '/api/readyz' });
+  assert.strictEqual(readyRes.status, 200);
+  assert.strictEqual((await readyRes.json()).ready, true);
+
+  // 2. Issue valid token
+  const token = createToken({ tenantId: 'e2e-tenant', userId: 'e2e-runner' });
+
+  // 3. Create link via POST /api/links with Bearer token
+  const createRes = await makeRequest(server, {
+    method: 'POST',
+    url: '/api/links',
+    headers: {
+      'content-type': 'application/json',
+      'authorization': `Bearer ${token}`
+    },
     body: { url: 'https://fastapi.tiangolo.com', customSlug: dynamicSlug }
   });
   assert.strictEqual(createRes.status, 201);
   const linkData = await createRes.json();
   assert.strictEqual(linkData.slug, dynamicSlug);
+  assert.strictEqual(linkData.tenantId, 'e2e-tenant');
 
-  // 3. Follow redirect /s/:slug
+  // 4. Follow public redirect /s/:slug (no auth required)
   const redirectRes = await makeRequest(server, { method: 'GET', url: `/s/${dynamicSlug}` });
   assert.strictEqual(redirectRes.status, 302);
   assert.strictEqual(redirectRes.headers.get('location'), 'https://fastapi.tiangolo.com/');
 
-  // 4. Verify analytics updated
+  // 5. Verify analytics updated under authenticated tenant
   const analyticsRes = await makeRequest(server, {
     method: 'GET',
     url: `/api/analytics/${dynamicSlug}`,
-    headers: { 'x-tenant-id': 'e2e-tenant' }
+    headers: { 'authorization': `Bearer ${token}` }
   });
   assert.strictEqual(analyticsRes.status, 200);
   const analyticsData = await analyticsRes.json();

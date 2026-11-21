@@ -1,12 +1,13 @@
 /**
  * SwiftLink Enterprise - Main Application HTTP Server
- * High-performance, zero-external-dependency Node.js production service.
+ * High-performance, authenticated, multi-tenant Node.js production service.
  */
 
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const { LinkStore } = require('./src/store');
+const { authenticateRequest, createToken } = require('./src/auth');
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const HOST = process.env.HOST || '0.0.0.0';
@@ -23,8 +24,9 @@ const server = http.createServer((req, res) => {
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('X-XSS-Protection', '1; mode=block');
 
-  // CORS Headers
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  // Hardened CORS: Avoid wildcard in production
+  const allowedOrigin = process.env.CORS_ORIGIN || (process.env.NODE_ENV === 'production' ? 'https://swiftlink.app' : '*');
+  res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Tenant-ID');
 
@@ -43,7 +45,8 @@ const server = http.createServer((req, res) => {
 
   if (method === 'GET' && (pathname === '/api/readyz' || pathname === '/readyz')) {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ ready: true, storage: 'in-memory-cached', version: '1.0.0' }));
+    const storageMode = process.env.DATABASE_URL ? 'postgresql-connected' : 'in-memory-cached';
+    res.end(JSON.stringify({ ready: true, storage: storageMode, version: '1.0.0' }));
     return;
   }
 
@@ -58,8 +61,48 @@ const server = http.createServer((req, res) => {
     }
   }
 
-  // 3. API: Create Short Link
+  // 3. API: Auth Token Issuance (OAuth2/JWT Token Exchange)
+  if (method === 'POST' && pathname === '/api/auth/token') {
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', () => {
+      try {
+        const payload = JSON.parse(body || '{}');
+        const tenantId = (payload.tenantId || payload.tid || '').trim();
+        const userId = (payload.userId || payload.sub || 'user-1').trim();
+
+        if (!tenantId) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'tenantId is required to issue authenticated tenant token' }));
+          return;
+        }
+
+        const token = createToken({ userId, tenantId });
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          token,
+          tokenType: 'Bearer',
+          expiresIn: 3600,
+          tenantId,
+          userId
+        }));
+      } catch (err) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Invalid JSON request body' }));
+      }
+    });
+    return;
+  }
+
+  // 4. API: Create Short Link (Authenticated & Tenant Scoped)
   if (method === 'POST' && pathname === '/api/links') {
+    const auth = authenticateRequest(req);
+    if (!auth.authenticated) {
+      res.writeHead(auth.statusCode || 401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: auth.error }));
+      return;
+    }
+
     let body = '';
     req.on('data', chunk => {
       body += chunk;
@@ -73,11 +116,12 @@ const server = http.createServer((req, res) => {
     req.on('end', () => {
       try {
         const payload = JSON.parse(body || '{}');
-        const tenantId = req.headers['x-tenant-id'] || 'default-tenant';
+        // Tenant identity is strictly derived from the authenticated token
         const link = store.createLink({
           url: payload.url,
           customSlug: payload.customSlug,
-          tenantId
+          tenantId: auth.tenantId,
+          createdBy: auth.user
         });
 
         res.writeHead(201, { 'Content-Type': 'application/json' });
@@ -91,24 +135,36 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // 4. API: List Links
+  // 5. API: List Links (Authenticated & Tenant Scoped)
   if (method === 'GET' && pathname === '/api/links') {
-    const tenantId = req.headers['x-tenant-id'] || 'default-tenant';
-    const links = store.listLinks(tenantId);
+    const auth = authenticateRequest(req);
+    if (!auth.authenticated) {
+      res.writeHead(auth.statusCode || 401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: auth.error }));
+      return;
+    }
+
+    const links = store.listLinks(auth.tenantId);
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(links));
     return;
   }
 
-  // 5. API: Analytics for a Slug
+  // 6. API: Analytics for a Slug (Authenticated & Tenant Scoped)
   if (method === 'GET' && pathname.startsWith('/api/analytics/')) {
+    const auth = authenticateRequest(req);
+    if (!auth.authenticated) {
+      res.writeHead(auth.statusCode || 401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: auth.error }));
+      return;
+    }
+
     const slug = pathname.replace('/api/analytics/', '').trim();
-    const tenantId = req.headers['x-tenant-id'] || null;
-    const analytics = store.getAnalytics(slug, tenantId);
+    const analytics = store.getAnalytics(slug, auth.tenantId);
 
     if (!analytics) {
       res.writeHead(404, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: `No analytics found for slug '${slug}'` }));
+      res.end(JSON.stringify({ error: `No analytics found for slug '${slug}' under your tenant` }));
       return;
     }
 
@@ -117,7 +173,7 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // 6. Fast Redirect Route (/s/:slug or /:slug)
+  // 7. Fast Public Redirect Route (/s/:slug or /:slug)
   let redirectSlug = null;
   if (pathname.startsWith('/s/')) {
     redirectSlug = pathname.slice(3).trim();
@@ -144,7 +200,7 @@ const server = http.createServer((req, res) => {
     }
   }
 
-  // 7. Fallback 404
+  // 8. Fallback 404
   res.writeHead(404, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({ error: 'Endpoint or short link not found', path: pathname }));
 });

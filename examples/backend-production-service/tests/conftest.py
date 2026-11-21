@@ -26,8 +26,9 @@ async def test_engine():
             await conn.run_sync(Base.metadata.create_all)
             await conn.execute(text("ALTER TABLE items ENABLE ROW LEVEL SECURITY;"))
             await conn.execute(text("ALTER TABLE items FORCE ROW LEVEL SECURITY;"))
+            # Execute DROP POLICY and CREATE POLICY as separate statements for asyncpg
+            await conn.execute(text("DROP POLICY IF EXISTS tenant_isolation_policy ON items;"))
             await conn.execute(text("""
-                DROP POLICY IF EXISTS tenant_isolation_policy ON items;
                 CREATE POLICY tenant_isolation_policy ON items
                 FOR ALL
                 USING (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), ''))
@@ -50,16 +51,20 @@ async def test_engine():
                 if conn.dialect.name == "postgresql":
                     await conn.execute(text("ALTER TABLE items ENABLE ROW LEVEL SECURITY;"))
                     await conn.execute(text("ALTER TABLE items FORCE ROW LEVEL SECURITY;"))
+                    await conn.execute(text("DROP POLICY IF EXISTS tenant_isolation_policy ON items;"))
                     await conn.execute(text("""
-                        DROP POLICY IF EXISTS tenant_isolation_policy ON items;
                         CREATE POLICY tenant_isolation_policy ON items
                         FOR ALL
                         USING (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), ''))
                         WITH CHECK (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), ''));
                     """))
-        except Exception:
-            # If unprivileged user, schema/RLS is already configured by admin/alembic
-            pass
+        except Exception as err:
+            err_str = str(err).lower()
+            # Only ignore expected permission errors if tables/RLS were already configured by migrations/admin
+            if "must be owner" in err_str or "insufficientprivilege" in err_str or "permission denied" in err_str:
+                pass
+            else:
+                raise
         finally:
             await setup_engine.dispose()
 

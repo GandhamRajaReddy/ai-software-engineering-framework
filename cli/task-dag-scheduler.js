@@ -291,8 +291,26 @@ class TaskDagScheduler {
               verificationPassed = verifyRes !== false && (!verifyRes || (verifyRes.passed !== false && verifyRes.success !== false));
               verificationReport = verifyRes;
             } else if (taskResult && taskResult.verificationResult) {
-              verificationPassed = Boolean(taskResult.verificationResult.passed);
-              verificationReport = taskResult.verificationResult;
+              if (requireVerification) {
+                // In strict verification mode: evidence MUST prove real execution (exitCode === 0 and executed command)
+                const vr = taskResult.verificationResult;
+                const hasCommand = Boolean(vr.command || vr.testCommand || vr.runner);
+                const hasExitCode = vr.exitCode === 0;
+                const passedFlag = vr.passed === true || vr.status === 'PASSED' || vr.success === true;
+                if (hasCommand && hasExitCode && passedFlag) {
+                  verificationPassed = true;
+                  verificationReport = vr;
+                } else {
+                  verificationPassed = false;
+                  verificationReport = {
+                    passed: false,
+                    reason: `Worker-supplied verification evidence rejected for task "${task.id}": missing proof of executable verification (must include executed command and exitCode: 0).`
+                  };
+                }
+              } else {
+                verificationPassed = Boolean(taskResult.verificationResult.passed);
+                verificationReport = taskResult.verificationResult;
+              }
             } else if (requireVerification) {
               // Fail-closed: strict mode requires explicit independent verifier or proof of test execution
               verificationPassed = false;

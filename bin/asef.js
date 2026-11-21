@@ -49,9 +49,13 @@ switch (command) {
     break;
 
   case 'gate-check':
-  case 'release-gate':
-    handleGateCheck(args[1] || '.');
+  case 'release-gate': {
+    const gateRes = handleGateCheck(args[1] || '.');
+    if (!gateRes || !gateRes.isProductionReady) {
+      process.exit(1);
+    }
     break;
+  }
 
   case 'sign-manifest':
   case 'sign':

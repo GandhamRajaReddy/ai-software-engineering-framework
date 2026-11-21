@@ -25,7 +25,9 @@ class AgentExecutionAdapter {
     this.providerManager = new ProviderExecutionManager({
       backend: this.backend,
       projectDir: this.projectDir,
-      allowMockFallback: options.allowMockFallback !== undefined ? options.allowMockFallback : true
+      allowMockFallback: options.allowMockFallback !== undefined
+        ? options.allowMockFallback
+        : (process.env.NODE_ENV === 'test' || options.isTest || process.env.ASEF_ALLOW_MOCK === 'true')
     });
     this.skillRegistry = new SkillRegistry(path.join(__dirname, '..', 'skills'));
   }
