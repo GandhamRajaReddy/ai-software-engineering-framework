@@ -275,22 +275,49 @@ function handlePipeline(args = []) {
   }
 }
 
-function handleSignManifest(manifestPath = '07_release_manifest.md') {
+function handleSignManifest(manifestPath = '07_release_manifest.md', options = {}) {
   const full = path.resolve(process.cwd(), manifestPath);
   if (!fs.existsSync(full)) {
     console.error(`Error: Manifest file not found at ${full}`);
     return { valid: false, error: 'Manifest not found' };
   }
 
+  let privateKey = process.env.ASEF_SIGNING_KEY;
+  let publicKey = process.env.ASEF_PUBLIC_KEY;
+
+  if (!privateKey) {
+    if (options.generateEphemeral || process.env.NODE_ENV === 'test' || process.argv.includes('--ephemeral-key')) {
+      const crypto = require('crypto');
+      const ephemeral = ManifestSigner.generateKeyPair();
+      privateKey = ephemeral.privateKey;
+      publicKey = ephemeral.publicKey;
+      ManifestSigner.registerTrustedKey(publicKey);
+      console.warn(`[SECURITY NOTICE] Generated ephemeral signing key for testing. Key enrolled in temporary runtime keyring.`);
+    } else {
+      console.error(`Error: Release signing requires an authorized Ed25519 private key via ASEF_SIGNING_KEY environment variable.`);
+      return {
+        valid: false,
+        error: 'Missing ASEF_SIGNING_KEY secret. Production release manifests cannot be signed without authorized release credentials.'
+      };
+    }
+  }
+
+  if (!publicKey) {
+    const crypto = require('crypto');
+    try {
+      const privKeyObj = crypto.createPrivateKey(privateKey);
+      const pubKeyObj = crypto.createPublicKey(privKeyObj);
+      publicKey = pubKeyObj.export({ type: 'spki', format: 'pem' });
+    } catch (e) {
+      console.error(`Error: Failed to derive public key from ASEF_SIGNING_KEY: ${e.message}`);
+      return { valid: false, error: 'Invalid ASEF_SIGNING_KEY' };
+    }
+  }
+
   let content = fs.readFileSync(full, 'utf8');
   content = content.replace(/## Cryptographic Release Signature[\s\S]*```asef-signature[\s\S]*?```\r?\n?/g, '').trim();
 
   const sourceTreeHash = computeSourceTreeHash(path.dirname(full));
-  const defaultSigningKey = `-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEIPCH27T041mMwwjDdfUqOrO/vg955l8CM2uk0ggQrpli\n-----END PRIVATE KEY-----\n`;
-  const defaultPublicKey = `MCowBQYDK2VwAyEA0jB6GeJotZm7zYBkmzm/ALrgzkNtmk98BTOHMVXzsEg=`;
-
-  const privateKey = process.env.ASEF_SIGNING_KEY || defaultSigningKey;
-  const publicKey = process.env.ASEF_PUBLIC_KEY || defaultPublicKey;
 
   const payload = {
     evidenceRecordIds: ['ev-prod-verified-001'],

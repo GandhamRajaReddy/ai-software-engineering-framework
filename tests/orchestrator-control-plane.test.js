@@ -107,13 +107,14 @@ test('Control Plane: Human approval gate halts unapproved sensitive tasks', asyn
   assert.match(results[0].error, /requires explicit human approval/);
 });
 
-test('Control Plane: Checkpoint saving and recovery preserves execution state', () => {
+test('Control Plane: Checkpoint saving and recovery preserves execution state and resets interrupted RUNNING tasks', () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'asef-checkpoint-test-'));
   const checkpointFile = path.join(tmpDir, 'checkpoint.json');
 
   const dag = new TaskDagScheduler();
   dag.addTask({ id: 'TASK-A', status: TASK_STATES.PENDING });
   dag.addTask({ id: 'TASK-B', status: TASK_STATES.PENDING });
+  dag.addTask({ id: 'TASK-INFLIGHT', status: TASK_STATES.PENDING });
 
   dag.transitionTaskState('TASK-A', TASK_STATES.READY);
   dag.transitionTaskState('TASK-A', TASK_STATES.RUNNING);
@@ -121,6 +122,10 @@ test('Control Plane: Checkpoint saving and recovery preserves execution state', 
   dag.transitionTaskState('TASK-A', TASK_STATES.VERIFYING);
   dag.transitionTaskState('TASK-A', TASK_STATES.VERIFIED);
   dag.transitionTaskState('TASK-A', TASK_STATES.COMPLETED);
+
+  // Simulate an interrupted task that was mid-execution when process crashed
+  dag.transitionTaskState('TASK-INFLIGHT', TASK_STATES.READY);
+  dag.transitionTaskState('TASK-INFLIGHT', TASK_STATES.RUNNING);
 
   dag.saveCheckpoint(checkpointFile);
   assert.ok(fs.existsSync(checkpointFile));
@@ -131,8 +136,43 @@ test('Control Plane: Checkpoint saving and recovery preserves execution state', 
 
   assert.strictEqual(recoveredDag.tasks.get('TASK-A').status, TASK_STATES.COMPLETED);
   assert.strictEqual(recoveredDag.tasks.get('TASK-B').status, TASK_STATES.PENDING);
+  // Interrupted task must be reset to READY so workers resume it rather than being stuck
+  assert.strictEqual(recoveredDag.tasks.get('TASK-INFLIGHT').status, TASK_STATES.READY);
 
   fs.rmSync(tmpDir, { recursive: true, force: true });
+});
+
+test('Control Plane: Independent verification procedure rejects faulty outputs and moves to REJECTED', async () => {
+  const dag = new TaskDagScheduler({ maxRetries: 1, baseBackoffMs: 10 });
+  dag.addTask({
+    id: 'TASK-VERIFY-CHECK',
+    targetFiles: [],
+    verify: async (output) => {
+      if (output.code === 'broken') {
+        return { passed: false, error: 'Static analysis check failed: missing input validation' };
+      }
+      return { passed: true };
+    }
+  });
+
+  let attempts = 0;
+  const results = await dag.runBatchWithWorkerPool([dag.tasks.get('TASK-VERIFY-CHECK')], async () => {
+    attempts++;
+    // First attempt generates faulty code, second attempt fixes it
+    return { code: attempts === 1 ? 'broken' : 'fixed' };
+  });
+
+  assert.strictEqual(attempts, 2);
+  assert.strictEqual(results[0].success, true);
+  assert.strictEqual(results[0].status, TASK_STATES.COMPLETED);
+
+  // Check state transitions recorded REJECTED before retry
+  const transitions = dag.tasks.get('TASK-VERIFY-CHECK').stateTransitions.map(t => t.state);
+  assert.ok(transitions.includes(TASK_STATES.OUTPUT_GENERATED));
+  assert.ok(transitions.includes(TASK_STATES.VERIFYING));
+  assert.ok(transitions.includes(TASK_STATES.REJECTED));
+  assert.ok(transitions.includes(TASK_STATES.VERIFIED));
+  assert.ok(transitions.includes(TASK_STATES.COMPLETED));
 });
 
 test('Control Plane: Stack-aware test command detection', () => {

@@ -33,12 +33,12 @@
 
 ```asef-signature
 Algorithm: Ed25519
-PublicKey: MCowBQYDK2VwAyEA0jB6GeJotZm7zYBkmzm/ALrgzkNtmk98BTOHMVXzsEg=
-Signature: 59TSSZ0skrOC4oYnVKtrg+lkU3wZjR1z75+1OfsJDL3sQEjOUdoG+rUhKQnAUzGZ3LOBCMrCY0i9Wcu/26+DAQ==
-PayloadDigest: 39e6932f66162d904f41ccc97a15bc39f6afdf4e202394ecff38aef71ce27807
+PublicKey: MCowBQYDK2VwAyEACrH3F44gQvfBJTUqXMMBpDg7Ft27Q9g4eeiU6noxpSk=
+Signature: yHTvt+GQiNYFCMezxUU6fOYGlm2TSpKysT0RaEfG5I//uPz98opNrbhikdN5cLexBeM1GqNoQJuFGi3RLQ33CA==
+PayloadDigest: ed12926e77fdf28f24ebad5cece452b190daf4b93cecac771f6e6bc57ff4a8d3
 ContentDigest: c10721b584db2396fb50942f727839115d4bee9e97c0c0b317f62fe04086207d
 GitCommit: HEAD
-SourceTreeHash: 07488ffd44651dd431ca240a5c6c74480fc836b64552f9210c1ac1570051ded6
+SourceTreeHash: 7bde471b8691fd67b49fcaa524ce44a540d17541d3db4ed981bd52d0bf675777
 ReleaseVersion: 1.0.0
 EvidenceIDs: ev-prod-verified-001
 ```

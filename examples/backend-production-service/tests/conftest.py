@@ -1,4 +1,9 @@
 import os
+import sys
+
+# Guarantee backend root is on sys.path regardless of invocation context
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
 import pytest
 import pytest_asyncio
 from httpx import AsyncClient, ASGITransport

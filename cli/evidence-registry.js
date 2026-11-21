@@ -20,6 +20,10 @@ const CODE_EXTENSIONS = new Set([
 const IGNORED_DIRS = new Set([
   '.git',
   '.asef',
+  '.data',
+  '__pycache__',
+  '.pytest_cache',
+  '.venv',
   'node_modules',
   'dist',
   'build',

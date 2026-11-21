@@ -10,7 +10,7 @@ const { LinkStore } = require('./src/store');
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const HOST = process.env.HOST || '0.0.0.0';
-const dataFilePath = path.join(__dirname, '.data', 'swiftlink-store.json');
+const dataFilePath = process.env.SWIFTLINK_DATA_FILE || (process.env.NODE_ENV === 'test' ? null : path.join(__dirname, '.data', 'swiftlink-store.json'));
 const store = new LinkStore({ dataFile: dataFilePath });
 
 const server = http.createServer((req, res) => {

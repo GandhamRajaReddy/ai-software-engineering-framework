@@ -98,10 +98,11 @@ jobs:
       - name: Run Pytest Suite with Non-Superuser Tenant Boundary Assertions
         working-directory: examples/backend-production-service
         env:
+          PYTHONPATH: .
           DATABASE_URL: postgresql+asyncpg://app_user:app_password@localhost:5432/testdb
           ENVIRONMENT: test
         run: |
-          pytest tests/ -v
+          python -m pytest tests/ -v
 
   docker-build-smoke:
     name: Production Docker Multi-Stage Build & Smoke
