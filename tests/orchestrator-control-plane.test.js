@@ -139,7 +139,38 @@ test('Control Plane: Checkpoint saving and recovery preserves execution state an
   // Interrupted task must be reset to READY so workers resume it rather than being stuck
   assert.strictEqual(recoveredDag.tasks.get('TASK-INFLIGHT').status, TASK_STATES.READY);
 
+  // Test rebinding task definitions (function pointers for execute & verify)
+  const taskDefs = [
+    {
+      id: 'TASK-INFLIGHT',
+      execute: async () => ({ executed: true }),
+      verify: async () => ({ passed: true })
+    }
+  ];
+  recoveredDag.rebindTaskDefinitions(taskDefs);
+  assert.strictEqual(typeof recoveredDag.tasks.get('TASK-INFLIGHT').execute, 'function');
+  assert.strictEqual(typeof recoveredDag.tasks.get('TASK-INFLIGHT').verify, 'function');
+
   fs.rmSync(tmpDir, { recursive: true, force: true });
+});
+
+test('Control Plane: Strictly fail-closed independent verification rejects unverified tasks in strict mode', async () => {
+  const dag = new TaskDagScheduler({ maxRetries: 0, requireIndependentVerification: true });
+  dag.addTask({ id: 'TASK-UNVERIFIED', targetFiles: [] });
+
+  const results = await dag.runBatchWithWorkerPool([dag.tasks.get('TASK-UNVERIFIED')], async () => {
+    return { generatedCode: 'const x = 1;' };
+  });
+
+  assert.strictEqual(results[0].success, false);
+  assert.strictEqual(results[0].status, TASK_STATES.FAILED);
+  assert.match(results[0].error, /lacks an independent verification procedure/);
+
+  // Confirm state transitions moved to REJECTED before failing
+  const transitions = dag.tasks.get('TASK-UNVERIFIED').stateTransitions.map(t => t.state);
+  assert.ok(transitions.includes(TASK_STATES.VERIFYING));
+  assert.ok(transitions.includes(TASK_STATES.REJECTED));
+  assert.ok(transitions.includes(TASK_STATES.FAILED));
 });
 
 test('Control Plane: Independent verification procedure rejects faulty outputs and moves to REJECTED', async () => {

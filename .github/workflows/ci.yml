@@ -100,6 +100,7 @@ jobs:
         env:
           PYTHONPATH: .
           DATABASE_URL: postgresql+asyncpg://app_user:app_password@localhost:5432/testdb
+          ADMIN_DATABASE_URL: postgresql+asyncpg://testuser:testpassword@localhost:5432/testdb
           ENVIRONMENT: test
         run: |
           python -m pytest tests/ -v

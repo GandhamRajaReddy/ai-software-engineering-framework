@@ -19,11 +19,11 @@ TEST_DATABASE_URL = os.environ.get("DATABASE_URL") or "sqlite+aiosqlite:///:memo
 
 @pytest_asyncio.fixture(scope="session")
 async def test_engine():
-    engine = create_async_engine(TEST_DATABASE_URL, echo=False)
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-        # Configure PostgreSQL Row-Level Security if testing against PostgreSQL
-        if engine.dialect.name == "postgresql":
+    admin_db_url = os.environ.get("ADMIN_DATABASE_URL")
+    if admin_db_url and "postgresql" in admin_db_url:
+        admin_engine = create_async_engine(admin_db_url, echo=False)
+        async with admin_engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
             await conn.execute(text("ALTER TABLE items ENABLE ROW LEVEL SECURITY;"))
             await conn.execute(text("ALTER TABLE items FORCE ROW LEVEL SECURITY;"))
             await conn.execute(text("""
@@ -33,6 +33,37 @@ async def test_engine():
                 USING (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), ''))
                 WITH CHECK (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), ''));
             """))
+        await admin_engine.dispose()
+    elif "sqlite" in TEST_DATABASE_URL:
+        engine = create_async_engine(TEST_DATABASE_URL, echo=False)
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        yield engine
+        await engine.dispose()
+        return
+    else:
+        # Fallback if no ADMIN_DATABASE_URL (e.g. single-user PostgreSQL in local dev)
+        setup_engine = create_async_engine(TEST_DATABASE_URL, echo=False)
+        try:
+            async with setup_engine.begin() as conn:
+                await conn.run_sync(Base.metadata.create_all)
+                if conn.dialect.name == "postgresql":
+                    await conn.execute(text("ALTER TABLE items ENABLE ROW LEVEL SECURITY;"))
+                    await conn.execute(text("ALTER TABLE items FORCE ROW LEVEL SECURITY;"))
+                    await conn.execute(text("""
+                        DROP POLICY IF EXISTS tenant_isolation_policy ON items;
+                        CREATE POLICY tenant_isolation_policy ON items
+                        FOR ALL
+                        USING (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), ''))
+                        WITH CHECK (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), ''));
+                    """))
+        except Exception:
+            # If unprivileged user, schema/RLS is already configured by admin/alembic
+            pass
+        finally:
+            await setup_engine.dispose()
+
+    engine = create_async_engine(TEST_DATABASE_URL, echo=False)
     yield engine
     await engine.dispose()
 
@@ -56,10 +87,17 @@ async def client(db_session):
 
 @pytest_asyncio.fixture
 async def setup_tenants(db_session):
-    tenant_a = Tenant(id="tenant-a-111", name="Acme Corp", slug="acme")
-    tenant_b = Tenant(id="tenant-b-222", name="Beta Corp", slug="beta")
-    db_session.add_all([tenant_a, tenant_b])
+    tenant_a = await db_session.get(Tenant, "tenant-a-111")
+    if not tenant_a:
+        tenant_a = Tenant(id="tenant-a-111", name="Acme Corp", slug="acme")
+        db_session.add(tenant_a)
+    tenant_b = await db_session.get(Tenant, "tenant-b-222")
+    if not tenant_b:
+        tenant_b = Tenant(id="tenant-b-222", name="Beta Corp", slug="beta")
+        db_session.add(tenant_b)
     await db_session.commit()
+    await db_session.refresh(tenant_a)
+    await db_session.refresh(tenant_b)
 
     token_a = create_access_token(user_id="user-a-1", email="alice@acme.com", tenant_id="tenant-a-111")
     token_b = create_access_token(user_id="user-b-2", email="bob@beta.com", tenant_id="tenant-b-222")
