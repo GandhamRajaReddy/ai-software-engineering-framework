@@ -14,6 +14,7 @@ const SIGNATURE_BLOCK_REGEX = /```asef-signature\r?\n([\s\S]*?)\r?\n```/;
 
 // Known trusted root release authority public keys
 const TRUSTED_RELEASE_KEYS = new Set([
+  'MCowBQYDK2VwAyEAB3xPt4Zvt8WM/b1dlef7CZjd07gHBQv6yzAHpbPREdU=',
   'MCowBQYDK2VwAyEAAiTO/3UCMcvPG544UUOS3X6tRFIWXKuVLTiab4bxG2k=',
   'MCowBQYDK2VwAyEACrH3F44gQvfBJTUqXMMBpDg7Ft27Q9g4eeiU6noxpSk=',
   'MCowBQYDK2VwAyEAJExf+487Ug1RDMpnd4memQVvWneZftlLzrpVEz2Ax9g='

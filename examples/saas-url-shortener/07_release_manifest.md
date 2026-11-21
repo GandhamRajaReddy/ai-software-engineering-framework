@@ -26,20 +26,18 @@
    ```
 3. **Point of Contact:** DevOps On-Call Team.
 
-
 ## Cryptographic Release Signature
 
 > **Notice:** This release manifest is cryptographically sealed. Any alteration of source files, evidence IDs, or gate scores invalidates this signature.
 
 ```asef-signature
 Algorithm: Ed25519
-PublicKey: MCowBQYDK2VwAyEAJExf+487Ug1RDMpnd4memQVvWneZftlLzrpVEz2Ax9g=
-Signature: JJjAYE7ReogePhN2ejB8q+FVpjdMiKp8Z7M8E/xAwb+Xrmyvano2LPYUgOpzpdcQKshyRXJ8i02lsXTFxlhoBg==
-PayloadDigest: 0ca7ebf0e09df12e2c26e7b01843946b23bf4d4777f2d7521e3cae500cfdce7b
+PublicKey: MCowBQYDK2VwAyEAB3xPt4Zvt8WM/b1dlef7CZjd07gHBQv6yzAHpbPREdU=
+Signature: R2c44cN3BIFKky4rcP/xBdBUFsMICAKrHb/Bo9/dXOkLJf6YEDJbl22JLvBocUY05SiWIOmEiKsuBtynkh8eDQ==
+PayloadDigest: b98f3c8b64c8c61442240ac938a98ea24e270ae14a31df3a3dffd1af54482506
 ContentDigest: 4bd6217b22bdd0abedd74fc6e540aafb9525b9839f19712edd9b73e3b10a14da
 GitCommit: HEAD
-SourceTreeHash: 7d64c6e26ba7ea4ce8c53e03321c7444690e7168e0bf6f5663bb97ae8b17e259
+SourceTreeHash: a04ad3df8e142494a9c0a9ead6d93a8ca3f76c4508f8a156ef30fe0cd518e655
 ReleaseVersion: 1.0.0
 EvidenceIDs: ev-prod-verified-001
 ```
-

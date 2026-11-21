@@ -49,9 +49,15 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (method === 'GET' && (pathname === '/api/readyz' || pathname === '/readyz')) {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    const storageMode = process.env.DATABASE_URL ? 'postgresql-connected' : 'in-memory-cached';
-    res.end(JSON.stringify({ ready: true, storage: storageMode, version: '1.0.0' }));
+    try {
+      await store.ping();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      const storageMode = process.env.DATABASE_URL ? 'postgresql-connected' : 'in-memory-cached';
+      res.end(JSON.stringify({ ready: true, storage: storageMode, version: '1.0.0' }));
+    } catch (err) {
+      res.writeHead(503, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ready: false, storage: 'disconnected', error: err.message }));
+    }
     return;
   }
 
@@ -68,7 +74,9 @@ const server = http.createServer(async (req, res) => {
 
   // 3. API: Authenticated Token Issuance (Credentials / API-Key Verified)
   if (method === 'POST' && pathname === '/api/auth/token') {
-    const clientIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '127.0.0.1';
+    const clientIp = (process.env.TRUST_PROXY === 'true' && req.headers['x-forwarded-for'])
+      ? req.headers['x-forwarded-for'].split(',')[0].trim()
+      : (req.socket.remoteAddress || '127.0.0.1');
     const rateLimit = checkTokenRateLimit(clientIp);
     if (!rateLimit.allowed) {
       res.writeHead(429, { 'Content-Type': 'application/json', 'Retry-After': String(rateLimit.resetInSeconds || 60) });

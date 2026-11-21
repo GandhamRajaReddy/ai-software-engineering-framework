@@ -15,23 +15,32 @@ if (isProduction && !process.env.JWT_SECRET) {
 const JWT_SECRET = process.env.JWT_SECRET || 'swiftlink-enterprise-dev-secret-key-32-chars-min!';
 
 // Registered tenant directory with server-side identity & API key validation
-const REGISTERED_TENANTS = {
-  'ci-tenant': {
-    name: 'Continuous Integration Test Tenant',
-    apiKey: process.env.SWIFTLINK_API_KEY || 'ci-tenant-api-key-secure-secret-token',
-    users: ['ci-user', 'admin']
-  },
-  'tenant-a': {
-    name: 'Acme Corporation',
-    apiKey: 'tenant-a-secret-key-12345',
-    users: ['user-a', 'alice@acme.com', 'admin-a']
-  },
-  'tenant-b': {
-    name: 'Beta Global',
-    apiKey: 'tenant-b-secret-key-67890',
-    users: ['user-b', 'bob@beta.com', 'admin-b']
+function getTenantRegistry() {
+  if (process.env.ASEF_TENANT_REGISTRY_JSON) {
+    try {
+      return JSON.parse(process.env.ASEF_TENANT_REGISTRY_JSON);
+    } catch (e) {
+      // Fallback if invalid JSON
+    }
   }
-};
+  return {
+    'ci-tenant': {
+      name: 'Continuous Integration Test Tenant',
+      apiKey: process.env.SWIFTLINK_API_KEY || 'ci-tenant-api-key-secure-secret-token',
+      users: ['ci-user', 'admin']
+    },
+    'tenant-a': {
+      name: 'Acme Corporation',
+      apiKey: process.env.TENANT_A_API_KEY || 'tenant-a-secret-key-12345',
+      users: ['user-a', 'alice@acme.com', 'admin-a']
+    },
+    'tenant-b': {
+      name: 'Beta Global',
+      apiKey: process.env.TENANT_B_API_KEY || 'tenant-b-secret-key-67890',
+      users: ['user-b', 'bob@beta.com', 'admin-b']
+    }
+  };
+}
 
 // In-memory sliding window rate limiter for token issuance
 const rateLimitMap = new Map(); // ip -> { count, resetTime }
@@ -65,7 +74,8 @@ function authenticateCredentials({ tenantId, userId, apiKey, clientSecret }) {
   const uid = (userId || 'user-1').trim();
   const providedKey = (apiKey || clientSecret || '').trim();
 
-  const tenantConfig = REGISTERED_TENANTS[tid];
+  const registry = getTenantRegistry();
+  const tenantConfig = registry[tid];
 
   // In production, strictly require registered tenant and valid API key
   if (isProduction) {
@@ -183,10 +193,11 @@ function verifyToken(tokenStr, secret = JWT_SECRET) {
     throw new Error('Token has expired');
   }
 
-  if (typeof payload.nbf === 'number') {
-    if (payload.nbf > (now + leeway)) {
-      throw new Error('Token not yet valid');
-    }
+  if (typeof payload.nbf !== 'number' || !Number.isFinite(payload.nbf)) {
+    throw new Error('Authentication token missing or invalid numeric not-before claim (nbf)');
+  }
+  if (payload.nbf > (now + leeway)) {
+    throw new Error('Token not yet valid');
   }
 
   if (typeof payload.iat !== 'number' || !Number.isFinite(payload.iat) || payload.iat > (now + 60)) {
@@ -250,6 +261,7 @@ module.exports = {
   authenticateRequest,
   authenticateCredentials,
   checkTokenRateLimit,
-  REGISTERED_TENANTS,
+  getTenantRegistry,
+  REGISTERED_TENANTS: getTenantRegistry(),
   JWT_SECRET
 };

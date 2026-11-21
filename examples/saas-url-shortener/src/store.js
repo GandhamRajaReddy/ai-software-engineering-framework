@@ -117,6 +117,22 @@ class LinkStore {
   }
 
   /**
+   * Health/Readiness probe verifying live database connection
+   */
+  async ping() {
+    if (this.pgPool) {
+      const client = await this.pgPool.connect();
+      try {
+        await client.query('SELECT 1');
+        return true;
+      } finally {
+        client.release();
+      }
+    }
+    return true;
+  }
+
+  /**
    * Hashes client IP for GDPR privacy compliance
    */
   hashIp(ip) {
@@ -252,11 +268,21 @@ class LinkStore {
     this.clicks.push(clickRecord);
 
     if (this.pgPool) {
-      await this.pgPool.query('UPDATE links SET clicks_count = clicks_count + 1 WHERE slug = $1', [slug]);
-      await this.pgPool.query(
-        'INSERT INTO clicks (slug, tenant_id, visitor_id, user_agent, referer, timestamp) VALUES ($1, $2, $3, $4, $5, $6)',
-        [clickRecord.slug, clickRecord.tenantId, clickRecord.visitorId, clickRecord.userAgent, clickRecord.referer, clickRecord.timestamp]
-      );
+      const client = await this.pgPool.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query('UPDATE links SET clicks_count = clicks_count + 1 WHERE slug = $1', [slug]);
+        await client.query(
+          'INSERT INTO clicks (slug, tenant_id, visitor_id, user_agent, referer, timestamp) VALUES ($1, $2, $3, $4, $5, $6)',
+          [clickRecord.slug, clickRecord.tenantId, clickRecord.visitorId, clickRecord.userAgent, clickRecord.referer, clickRecord.timestamp]
+        );
+        await client.query('COMMIT');
+      } catch (err) {
+        await client.query('ROLLBACK');
+        throw err;
+      } finally {
+        client.release();
+      }
     }
 
     this.persist();
