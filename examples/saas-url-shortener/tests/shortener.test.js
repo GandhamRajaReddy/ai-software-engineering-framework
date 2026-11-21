@@ -3,7 +3,7 @@ const assert = require('node:assert');
 const http = require('http');
 const { generateSlug, isValidSlug, sanitizeUrl } = require('../src/slug');
 const { LinkStore } = require('../src/store');
-const { createToken, verifyToken } = require('../src/auth');
+const { createToken, verifyToken, authenticateCredentials, checkTokenRateLimit } = require('../src/auth');
 const { server, store } = require('../server');
 
 test('Slug Engine: Base62 generation produces unguessable valid slugs', () => {
@@ -39,11 +39,12 @@ test('Security: URL Sanitizer allows legitimate HTTP/HTTPS and blocks SSRF/bad p
   assert.throws(() => sanitizeUrl('http://169.254.169.254/latest/meta-data/'), /Restricted destination hostname/);
 });
 
-test('Link Store: Link creation, collision prevention, and cached destination lookup', () => {
+test('Link Store: Link creation, collision prevention, and cached destination lookup', async () => {
   const localStore = new LinkStore();
+  await localStore.init();
 
   // Create link
-  const link = localStore.createLink({
+  const link = await localStore.createLink({
     url: 'https://news.ycombinator.com',
     customSlug: 'my-hackernews',
     tenantId: 'tenant-alpha'
@@ -52,8 +53,8 @@ test('Link Store: Link creation, collision prevention, and cached destination lo
   assert.strictEqual(link.destinationUrl, 'https://news.ycombinator.com/');
 
   // Collision prevention
-  assert.throws(() => {
-    localStore.createLink({
+  await assert.rejects(async () => {
+    await localStore.createLink({
       url: 'https://other-site.com',
       customSlug: 'my-hackernews',
       tenantId: 'tenant-alpha'
@@ -61,8 +62,8 @@ test('Link Store: Link creation, collision prevention, and cached destination lo
   }, /already exists/);
 
   // Cross-tenant collision prevention
-  assert.throws(() => {
-    localStore.createLink({
+  await assert.rejects(async () => {
+    await localStore.createLink({
       url: 'https://other-site.com',
       customSlug: 'my-hackernews',
       tenantId: 'tenant-beta'
@@ -70,28 +71,63 @@ test('Link Store: Link creation, collision prevention, and cached destination lo
   }, /already registered/);
 
   // Destination retrieval
-  const dest = localStore.getDestination('my-hackernews');
+  const dest = await localStore.getDestination('my-hackernews');
   assert.strictEqual(dest, 'https://news.ycombinator.com/');
 });
 
-test('Telemetry: Click tracking and GDPR hashed IP analytics', () => {
+test('Telemetry: Click tracking and GDPR hashed IP analytics', async () => {
   const localStore = new LinkStore();
-  localStore.createLink({
+  await localStore.init();
+
+  await localStore.createLink({
     url: 'https://stripe.com',
     customSlug: 'stripe-ref',
     tenantId: 'tenant-stripe'
   });
 
   // Record clicks from two different IPs
-  localStore.recordClick('stripe-ref', { ip: '198.51.100.1', userAgent: 'Mozilla/5.0', referer: 'https://twitter.com' });
-  localStore.recordClick('stripe-ref', { ip: '198.51.100.1', userAgent: 'Mozilla/5.0', referer: 'https://twitter.com' });
-  localStore.recordClick('stripe-ref', { ip: '203.0.113.5', userAgent: 'Chrome/120', referer: 'https://linkedin.com' });
+  await localStore.recordClick('stripe-ref', { ip: '198.51.100.1', userAgent: 'Mozilla/5.0', referer: 'https://twitter.com' });
+  await localStore.recordClick('stripe-ref', { ip: '198.51.100.1', userAgent: 'Mozilla/5.0', referer: 'https://twitter.com' });
+  await localStore.recordClick('stripe-ref', { ip: '203.0.113.5', userAgent: 'Chrome/120', referer: 'https://linkedin.com' });
 
-  const analytics = localStore.getAnalytics('stripe-ref', 'tenant-stripe');
+  const analytics = await localStore.getAnalytics('stripe-ref', 'tenant-stripe');
   assert.strictEqual(analytics.totalClicks, 3);
   assert.strictEqual(analytics.uniqueVisitors, 2);
   assert.strictEqual(analytics.referrers['https://twitter.com'], 2);
   assert.strictEqual(analytics.referrers['https://linkedin.com'], 1);
+});
+
+test('Security & Cryptography: Strict JWT Claims, Algorithm Enforcement & Rate Limiting', () => {
+  // 1. Valid token passes
+  const validToken = createToken({ tenantId: 'tenant-a', userId: 'user-a' });
+  const verified = verifyToken(validToken);
+  assert.strictEqual(verified.tenantId, 'tenant-a');
+  assert.strictEqual(verified.sub, 'user-a');
+  assert.strictEqual(typeof verified.exp, 'number');
+
+  // 2. Reject non-numeric exp claim
+  const now = Math.floor(Date.now() / 1000);
+  const crypto = require('crypto');
+  const { JWT_SECRET } = require('../src/auth');
+
+  const b64H = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url');
+  const badExpPayload = { iss: 'swiftlink-auth', aud: 'swiftlink-api', iat: now, tenantId: 'tenant-a' }; // missing exp
+  const b64P = Buffer.from(JSON.stringify(badExpPayload)).toString('base64url');
+  const sig = crypto.createHmac('sha256', JWT_SECRET).update(`${b64H}.${b64P}`).digest('base64url');
+  assert.throws(() => verifyToken(`${b64H}.${b64P}.${sig}`), /missing or invalid numeric expiration/);
+
+  // 3. Reject unsupported algorithm 'none'
+  const noneH = Buffer.from(JSON.stringify({ alg: 'none', typ: 'JWT' })).toString('base64url');
+  const noneSig = crypto.createHmac('sha256', JWT_SECRET).update(`${noneH}.${b64P}`).digest('base64url');
+  assert.throws(() => verifyToken(`${noneH}.${b64P}.${noneSig}`), /Unsupported token algorithm/);
+
+  // 4. Rate limiter allows normal traffic and blocks floods
+  const testIp = '198.51.100.99';
+  const initial = checkTokenRateLimit(testIp, 5, 10000);
+  assert.strictEqual(initial.allowed, true);
+  for (let i = 0; i < 4; i++) checkTokenRateLimit(testIp, 5, 10000);
+  const throttled = checkTokenRateLimit(testIp, 5, 10000);
+  assert.strictEqual(throttled.allowed, false);
 });
 
 function makeRequest(srv, { method = 'GET', url = '/', headers = {}, body = null } = {}) {
@@ -157,27 +193,35 @@ test('Authentication & Tenant Boundary: Tokens, Spoofing Defense & Isolation', a
   const unauthData = await unauthRes.json();
   assert.match(unauthData.error, /Authentication required/);
 
-  // 2. Obtain token for Tenant A
+  // 2. Reject unauthenticated/unknown tenant token request
+  const badAuthRes = await makeRequest(server, {
+    method: 'POST',
+    url: '/api/auth/token',
+    body: { tenantId: 'unknown-intruder-tenant', userId: 'attacker' }
+  });
+  assert.strictEqual(badAuthRes.status, 401);
+
+  // 3. Obtain token for Tenant A
   const tokenARes = await makeRequest(server, {
     method: 'POST',
     url: '/api/auth/token',
-    body: { tenantId: 'tenant-acme', userId: 'alice' }
+    body: { tenantId: 'tenant-a', userId: 'alice', apiKey: 'tenant-a-secret-key-12345' }
   });
   assert.strictEqual(tokenARes.status, 200);
   const tokenAData = await tokenARes.json();
-  assert.strictEqual(tokenAData.tenantId, 'tenant-acme');
+  assert.strictEqual(tokenAData.tenantId, 'tenant-a');
   const tokenA = tokenAData.token;
 
-  // 3. Obtain token for Tenant B
+  // 4. Obtain token for Tenant B
   const tokenBRes = await makeRequest(server, {
     method: 'POST',
     url: '/api/auth/token',
-    body: { tenantId: 'tenant-beta', userId: 'bob' }
+    body: { tenantId: 'tenant-b', userId: 'bob', apiKey: 'tenant-b-secret-key-67890' }
   });
   assert.strictEqual(tokenBRes.status, 200);
   const tokenB = (await tokenBRes.json()).token;
 
-  // 4. Create link as Tenant A
+  // 5. Create link as Tenant A
   const acmeSlug = 'acme-portal-' + Math.random().toString(36).slice(2, 8);
   const createRes = await makeRequest(server, {
     method: 'POST',
@@ -187,22 +231,22 @@ test('Authentication & Tenant Boundary: Tokens, Spoofing Defense & Isolation', a
   });
   assert.strictEqual(createRes.status, 201);
   const createdLink = await createRes.json();
-  assert.strictEqual(createdLink.tenantId, 'tenant-acme');
+  assert.strictEqual(createdLink.tenantId, 'tenant-a');
 
-  // 5. Tenant Spoofing Attempt: User with Token A supplies X-Tenant-ID: tenant-beta -> Rejected 403
+  // 6. Tenant Spoofing Attempt: User with Token A supplies X-Tenant-ID: tenant-b -> Rejected 403
   const spoofRes = await makeRequest(server, {
     method: 'POST',
     url: '/api/links',
     headers: {
       'Authorization': `Bearer ${tokenA}`,
-      'X-Tenant-ID': 'tenant-beta'
+      'X-Tenant-ID': 'tenant-b'
     },
     body: { url: 'https://acme.org/spoof', customSlug: 'acme-spoof-' + Math.random().toString(36).slice(2, 8) }
   });
   assert.strictEqual(spoofRes.status, 403);
   assert.match((await spoofRes.json()).error, /Tenant identity spoofing detected/);
 
-  // 6. Tenant B cannot see Tenant A's links in GET /api/links
+  // 7. Tenant B cannot see Tenant A's links in GET /api/links
   const listBRes = await makeRequest(server, {
     method: 'GET',
     url: '/api/links',
@@ -212,7 +256,7 @@ test('Authentication & Tenant Boundary: Tokens, Spoofing Defense & Isolation', a
   const linksB = await listBRes.json();
   assert.ok(linksB.every(l => l.slug !== acmeSlug));
 
-  // 7. Tenant B cannot see Tenant A's analytics
+  // 8. Tenant B cannot see Tenant A's analytics
   const analyticsBRes = await makeRequest(server, {
     method: 'GET',
     url: `/api/analytics/${acmeSlug}`,
@@ -234,7 +278,7 @@ test('E2E HTTP Server: Endpoints, Public 302 Redirect, and Health Check', async 
   assert.strictEqual((await readyRes.json()).ready, true);
 
   // 2. Issue valid token
-  const token = createToken({ tenantId: 'e2e-tenant', userId: 'e2e-runner' });
+  const token = createToken({ tenantId: 'ci-tenant', userId: 'ci-user' });
 
   // 3. Create link via POST /api/links with Bearer token
   const createRes = await makeRequest(server, {
@@ -249,7 +293,7 @@ test('E2E HTTP Server: Endpoints, Public 302 Redirect, and Health Check', async 
   assert.strictEqual(createRes.status, 201);
   const linkData = await createRes.json();
   assert.strictEqual(linkData.slug, dynamicSlug);
-  assert.strictEqual(linkData.tenantId, 'e2e-tenant');
+  assert.strictEqual(linkData.tenantId, 'ci-tenant');
 
   // 4. Follow public redirect /s/:slug (no auth required)
   const redirectRes = await makeRequest(server, { method: 'GET', url: `/s/${dynamicSlug}` });

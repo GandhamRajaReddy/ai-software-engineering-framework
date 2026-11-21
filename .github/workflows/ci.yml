@@ -103,7 +103,7 @@ jobs:
           ADMIN_DATABASE_URL: postgresql+asyncpg://testuser:testpassword@localhost:5432/testdb
           ENVIRONMENT: test
         run: |
-          python -m pytest tests/ -v
+          python -m pytest tests/ -v -s --tb=short
 
   docker-build-smoke:
     name: Production Docker Multi-Stage Build & Smoke
@@ -181,6 +181,7 @@ jobs:
           docker run -d --name test-swiftlink -p 3000:3000 \
             -e NODE_ENV=development \
             -e JWT_SECRET="ci-development-secret-key-32-chars-minimum!" \
+            -e SWIFTLINK_API_KEY="ci-tenant-api-key-secure-secret-token" \
             asef/swiftlink:test
           sleep 4
           docker logs test-swiftlink
@@ -188,5 +189,5 @@ jobs:
           curl -f http://localhost:3000/api/readyz || exit 1
           curl -f -X POST http://localhost:3000/api/auth/token \
             -H "Content-Type: application/json" \
-            -d '{"tenantId":"ci-tenant","userId":"ci-user"}' || exit 1
+            -d '{"tenantId":"ci-tenant","userId":"ci-user","apiKey":"ci-tenant-api-key-secure-secret-token"}' || exit 1
           docker stop test-swiftlink

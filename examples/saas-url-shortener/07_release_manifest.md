@@ -33,12 +33,12 @@
 
 ```asef-signature
 Algorithm: Ed25519
-PublicKey: MCowBQYDK2VwAyEAKO7brVJXzmXVs9d4+us3vXTLTgEcvPkKElynGyJkquk=
-Signature: ra8LV5cOLcgOzUvNg1vjr86patzujXE3ZZ55hoeQl+pW4M05fzNh9LEuwPcPemraSy7pOBviZXtbvZ5eEJUwCQ==
-PayloadDigest: ee2300b4b917b4d13ea11a554a416e2393ee5104c9db6457e575df9d47e26860
+PublicKey: MCowBQYDK2VwAyEAJExf+487Ug1RDMpnd4memQVvWneZftlLzrpVEz2Ax9g=
+Signature: JJjAYE7ReogePhN2ejB8q+FVpjdMiKp8Z7M8E/xAwb+Xrmyvano2LPYUgOpzpdcQKshyRXJ8i02lsXTFxlhoBg==
+PayloadDigest: 0ca7ebf0e09df12e2c26e7b01843946b23bf4d4777f2d7521e3cae500cfdce7b
 ContentDigest: 4bd6217b22bdd0abedd74fc6e540aafb9525b9839f19712edd9b73e3b10a14da
 GitCommit: HEAD
-SourceTreeHash: 831a2184056ca5fbfadd65e38be64f471fd21be0b0842586ec8bbd9a7f926b71
+SourceTreeHash: 7d64c6e26ba7ea4ce8c53e03321c7444690e7168e0bf6f5663bb97ae8b17e259
 ReleaseVersion: 1.0.0
 EvidenceIDs: ev-prod-verified-001
 ```

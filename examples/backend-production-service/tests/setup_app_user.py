@@ -40,6 +40,12 @@ async def configure_non_superuser_role():
         await conn.execute(text("GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO app_user;"))
         await conn.execute(text("ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO app_user;"))
         await conn.execute(text("ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO app_user;"))
+        # Allow non-superuser app_user to verify role attributes in test assertions
+        try:
+            await conn.execute(text("GRANT SELECT ON pg_roles TO app_user;"))
+            await conn.execute(text("GRANT SELECT ON pg_class TO app_user;"))
+        except Exception:
+            pass
 
     await engine.dispose()
     print("[setup_app_user] Successfully configured unprivileged non-superuser role 'app_user'.")

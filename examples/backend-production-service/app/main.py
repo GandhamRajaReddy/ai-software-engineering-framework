@@ -17,17 +17,17 @@ logger = logging.getLogger("app.main")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # In development/test environments, initialize tables if not managed by migration runner
+    # In development mode only, initialize tables if using SQLite or unmanaged local engine
     if engine:
-        if settings.ENVIRONMENT in ["development", "test"]:
-            logger.info("Dev/Test mode: Verifying database tables...")
+        if settings.ENVIRONMENT == "development":
+            logger.info("Dev mode: Verifying database tables via metadata create_all...")
             try:
                 async with engine.begin() as conn:
                     await conn.run_sync(Base.metadata.create_all)
             except Exception as exc:
                 logger.warning(f"Database table verification skipped or driver missing: {exc}")
         else:
-            logger.info("Production mode: Schema must be applied via Alembic migrations.")
+            logger.info("Test/Production mode: Schema is strictly managed via Alembic migrations.")
     else:
         logger.warning("Database engine not initialized (missing driver or config).")
         

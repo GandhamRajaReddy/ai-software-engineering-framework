@@ -7,14 +7,19 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const { LinkStore } = require('./src/store');
-const { authenticateRequest, createToken } = require('./src/auth');
+const {
+  authenticateRequest,
+  createToken,
+  authenticateCredentials,
+  checkTokenRateLimit
+} = require('./src/auth');
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const HOST = process.env.HOST || '0.0.0.0';
 const dataFilePath = process.env.SWIFTLINK_DATA_FILE || (process.env.NODE_ENV === 'test' ? null : path.join(__dirname, '.data', 'swiftlink-store.json'));
 const store = new LinkStore({ dataFile: dataFilePath });
 
-const server = http.createServer((req, res) => {
+const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
   const pathname = url.pathname;
   const method = req.method;
@@ -28,7 +33,7 @@ const server = http.createServer((req, res) => {
   const allowedOrigin = process.env.CORS_ORIGIN || (process.env.NODE_ENV === 'production' ? 'https://swiftlink.app' : '*');
   res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Tenant-ID');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Tenant-ID, X-API-Key');
 
   if (method === 'OPTIONS') {
     res.writeHead(204);
@@ -61,8 +66,16 @@ const server = http.createServer((req, res) => {
     }
   }
 
-  // 3. API: Auth Token Issuance (OAuth2/JWT Token Exchange)
+  // 3. API: Authenticated Token Issuance (Credentials / API-Key Verified)
   if (method === 'POST' && pathname === '/api/auth/token') {
+    const clientIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '127.0.0.1';
+    const rateLimit = checkTokenRateLimit(clientIp);
+    if (!rateLimit.allowed) {
+      res.writeHead(429, { 'Content-Type': 'application/json', 'Retry-After': String(rateLimit.resetInSeconds || 60) });
+      res.end(JSON.stringify({ error: `Rate limit exceeded. Try again in ${rateLimit.resetInSeconds} seconds.` }));
+      return;
+    }
+
     let body = '';
     req.on('data', chunk => { body += chunk; });
     req.on('end', () => {
@@ -70,21 +83,28 @@ const server = http.createServer((req, res) => {
         const payload = JSON.parse(body || '{}');
         const tenantId = (payload.tenantId || payload.tid || '').trim();
         const userId = (payload.userId || payload.sub || 'user-1').trim();
+        const apiKey = payload.apiKey || payload.clientSecret || req.headers['x-api-key'] || '';
 
-        if (!tenantId) {
-          res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'tenantId is required to issue authenticated tenant token' }));
+        const authResult = authenticateCredentials({ tenantId, userId, apiKey });
+        if (!authResult.authenticated) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: authResult.error }));
           return;
         }
 
-        const token = createToken({ userId, tenantId });
+        const token = createToken({
+          userId: authResult.userId,
+          tenantId: authResult.tenantId,
+          roles: authResult.roles
+        });
+
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({
           token,
           tokenType: 'Bearer',
           expiresIn: 3600,
-          tenantId,
-          userId
+          tenantId: authResult.tenantId,
+          userId: authResult.userId
         }));
       } catch (err) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -113,11 +133,11 @@ const server = http.createServer((req, res) => {
       }
     });
 
-    req.on('end', () => {
+    req.on('end', async () => {
       try {
         const payload = JSON.parse(body || '{}');
         // Tenant identity is strictly derived from the authenticated token
-        const link = store.createLink({
+        const link = await store.createLink({
           url: payload.url,
           customSlug: payload.customSlug,
           tenantId: auth.tenantId,
@@ -144,9 +164,14 @@ const server = http.createServer((req, res) => {
       return;
     }
 
-    const links = store.listLinks(auth.tenantId);
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify(links));
+    try {
+      const links = await store.listLinks(auth.tenantId);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(links));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message }));
+    }
     return;
   }
 
@@ -160,16 +185,21 @@ const server = http.createServer((req, res) => {
     }
 
     const slug = pathname.replace('/api/analytics/', '').trim();
-    const analytics = store.getAnalytics(slug, auth.tenantId);
+    try {
+      const analytics = await store.getAnalytics(slug, auth.tenantId);
 
-    if (!analytics) {
-      res.writeHead(404, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: `No analytics found for slug '${slug}' under your tenant` }));
-      return;
+      if (!analytics) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: `No analytics found for slug '${slug}' under your tenant` }));
+        return;
+      }
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(analytics));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message }));
     }
-
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify(analytics));
     return;
   }
 
@@ -182,21 +212,24 @@ const server = http.createServer((req, res) => {
   }
 
   if (method === 'GET' && redirectSlug) {
-    const destination = store.getDestination(redirectSlug);
-    if (destination) {
-      // Record click telemetry asynchronously
-      const clientIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '127.0.0.1';
-      const userAgent = req.headers['user-agent'] || '';
-      const referer = req.headers['referer'] || '';
-      store.recordClick(redirectSlug, { ip: clientIp, userAgent, referer });
+    try {
+      const destination = await store.getDestination(redirectSlug);
+      if (destination) {
+        const clientIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '127.0.0.1';
+        const userAgent = req.headers['user-agent'] || '';
+        const referer = req.headers['referer'] || '';
+        await store.recordClick(redirectSlug, { ip: clientIp, userAgent, referer });
 
-      // Immediate 302 Redirect
-      res.writeHead(302, {
-        'Location': destination,
-        'Cache-Control': 'private, no-cache, no-store, must-revalidate'
-      });
-      res.end();
-      return;
+        // Immediate 302 Redirect
+        res.writeHead(302, {
+          'Location': destination,
+          'Cache-Control': 'private, no-cache, no-store, must-revalidate'
+        });
+        res.end();
+        return;
+      }
+    } catch (err) {
+      // Fall through to 404
     }
   }
 
@@ -205,10 +238,22 @@ const server = http.createServer((req, res) => {
   res.end(JSON.stringify({ error: 'Endpoint or short link not found', path: pathname }));
 });
 
-if (require.main === module) {
-  server.listen(PORT, HOST, () => {
-    console.log(`🚀 SwiftLink Enterprise running at http://${HOST}:${PORT}`);
+async function startServer(port = PORT, host = HOST) {
+  await store.init();
+  return new Promise((resolve, reject) => {
+    server.listen(port, host, () => {
+      console.log(`🚀 SwiftLink Enterprise running at http://${host}:${port}`);
+      resolve(server);
+    });
+    server.on('error', reject);
   });
 }
 
-module.exports = { server, store };
+if (require.main === module) {
+  startServer(PORT, HOST).catch(err => {
+    console.error('FATAL:', err.message);
+    process.exit(1);
+  });
+}
+
+module.exports = { server, store, startServer };

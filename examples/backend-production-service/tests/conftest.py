@@ -34,6 +34,12 @@ async def test_engine():
                 USING (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), ''))
                 WITH CHECK (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), ''));
             """))
+            try:
+                await conn.execute(text("GRANT USAGE ON SCHEMA public TO app_user;"))
+                await conn.execute(text("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO app_user;"))
+                await conn.execute(text("GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO app_user;"))
+            except Exception:
+                pass
         await admin_engine.dispose()
     elif "sqlite" in TEST_DATABASE_URL:
         engine = create_async_engine(TEST_DATABASE_URL, echo=False)

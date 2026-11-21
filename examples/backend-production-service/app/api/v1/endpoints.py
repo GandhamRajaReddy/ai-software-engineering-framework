@@ -22,6 +22,7 @@ async def create_item(
         description=payload.description
     )
     db.add(item)
+    await db.flush()
     await db.commit()
     await db.refresh(item)
     return item
@@ -77,6 +78,7 @@ async def update_item(
         item.description = payload.description
 
     try:
+        await db.flush()
         await db.commit()
         await db.refresh(item)
     except StaleDataError:
