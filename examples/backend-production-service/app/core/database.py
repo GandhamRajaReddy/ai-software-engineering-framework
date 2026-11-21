@@ -29,27 +29,19 @@ async def get_db():
     if not AsyncSessionLocal:
         raise RuntimeError("Database engine not initialized. Ensure database drivers (e.g. asyncpg, aiosqlite) are installed.")
     async with AsyncSessionLocal() as session:
-        try:
-            yield session
-        finally:
-            bind = session.bind
-            if bind and bind.dialect.name == "postgresql":
-                try:
-                    await session.execute(text("SELECT set_config('app.current_tenant_id', '', false)"))
-                except Exception:
-                    pass
-            await session.close()
+        yield session
 
 async def set_tenant_context(session: AsyncSession, tenant_id: str) -> None:
     """
-    Sets the session-scoped PostgreSQL tenant identifier for Row-Level Security (RLS).
-    Persists across flushes/commits within the active session connection and is wiped upon session return.
+    Sets the transaction-local PostgreSQL tenant identifier for Row-Level Security (RLS).
+    Uses set_config(..., is_local=true) so the setting is strictly scoped to the active transaction
+    and automatically cleared on commit or rollback by PostgreSQL.
     Dialect-safe: no-op on SQLite or other non-PostgreSQL engines.
     """
     bind = session.bind
     dialect_name = bind.dialect.name if bind else ""
     if dialect_name == "postgresql":
         await session.execute(
-            text("SELECT set_config('app.current_tenant_id', :tid, false)"),
+            text("SELECT set_config('app.current_tenant_id', :tid, true)"),
             {"tid": tenant_id}
         )

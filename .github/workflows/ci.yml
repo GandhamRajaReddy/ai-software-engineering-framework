@@ -103,7 +103,15 @@ jobs:
           ADMIN_DATABASE_URL: postgresql+asyncpg://testuser:testpassword@localhost:5432/testdb
           ENVIRONMENT: test
         run: |
-          python -m pytest tests/ -v -s --tb=short
+          if ! python -m pytest tests/ -v -s --tb=short > pytest.log 2>&1; then
+            cat pytest.log
+            echo "### Pytest Failure Details" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            cat pytest.log >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
+          cat pytest.log
 
   docker-build-smoke:
     name: Production Docker Multi-Stage Build & Smoke

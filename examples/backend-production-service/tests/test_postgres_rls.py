@@ -48,7 +48,7 @@ async def test_postgresql_row_level_security_enforcement(db_session):
     )
 
     # Insert Item for Tenant A while setting session tenant context
-    await db_session.execute(text(f"SELECT set_config('app.current_tenant_id', '{tenant_a_id}', false);"))
+    await db_session.execute(text(f"SELECT set_config('app.current_tenant_id', '{tenant_a_id}', true);"))
     item_a_id = generate_uuidv7()
     await db_session.execute(
         text("INSERT INTO items (id, tenant_id, title, description, version, created_at, updated_at) VALUES (:id, :tid, 'Confidential A', 'Desc', 1, NOW(), NOW())"),
@@ -56,7 +56,7 @@ async def test_postgresql_row_level_security_enforcement(db_session):
     )
 
     # Switch session context to Tenant B
-    await db_session.execute(text(f"SELECT set_config('app.current_tenant_id', '{tenant_b_id}', false);"))
+    await db_session.execute(text(f"SELECT set_config('app.current_tenant_id', '{tenant_b_id}', true);"))
     
     # 1. Verify unconstrained SELECT returns 0 items for Tenant B
     result = await db_session.execute(text("SELECT id, title FROM items;"))
@@ -102,8 +102,7 @@ async def test_api_requests_with_postgresql_rls_context(client, setup_tenants, d
     assert res_b.status_code == 404
 
     # 3. Direct unconstrained SQL query under Tenant B's RLS session context returns 0 rows
-    await db_session.execute(text(f"SELECT set_config('app.current_tenant_id', 'tenant-b-222', false);"))
+    await db_session.execute(text(f"SELECT set_config('app.current_tenant_id', 'tenant-b-222', true);"))
     leak_check = await db_session.execute(text(f"SELECT * FROM items WHERE id = '{item_id}';"))
     assert leak_check.fetchone() is None
-    await db_session.execute(text(f"SELECT set_config('app.current_tenant_id', '', false);"))
     await db_session.rollback()

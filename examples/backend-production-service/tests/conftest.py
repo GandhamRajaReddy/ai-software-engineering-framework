@@ -83,12 +83,6 @@ async def db_session(test_engine):
     session_maker = async_sessionmaker(bind=test_engine, class_=AsyncSession, expire_on_commit=False)
     async with session_maker() as session:
         yield session
-        bind = session.bind
-        if bind and bind.dialect.name == "postgresql":
-            try:
-                await session.execute(text("SELECT set_config('app.current_tenant_id', '', false)"))
-            except Exception:
-                pass
         await session.rollback()
 
 @pytest_asyncio.fixture
@@ -97,16 +91,7 @@ async def client(test_engine):
 
     async def override_get_db():
         async with session_maker() as session:
-            try:
-                yield session
-            finally:
-                bind = session.bind
-                if bind and bind.dialect.name == "postgresql":
-                    try:
-                        await session.execute(text("SELECT set_config('app.current_tenant_id', '', false)"))
-                    except Exception:
-                        pass
-                await session.close()
+            yield session
 
     app.dependency_overrides[get_db] = override_get_db
     transport = ASGITransport(app=app)
