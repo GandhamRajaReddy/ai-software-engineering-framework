@@ -8,6 +8,7 @@ import pytest
 import pytest_asyncio
 from httpx import AsyncClient, ASGITransport
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
+from sqlalchemy.pool import NullPool, StaticPool
 from sqlalchemy import text
 from app.main import app
 from app.core.database import get_db
@@ -17,11 +18,11 @@ from app.models.tenant import Tenant
 
 TEST_DATABASE_URL = os.environ.get("DATABASE_URL") or "sqlite+aiosqlite:///:memory:"
 
-@pytest_asyncio.fixture(scope="session")
+@pytest_asyncio.fixture
 async def test_engine():
     admin_db_url = os.environ.get("ADMIN_DATABASE_URL")
     if admin_db_url and "postgresql" in admin_db_url:
-        admin_engine = create_async_engine(admin_db_url, echo=False)
+        admin_engine = create_async_engine(admin_db_url, poolclass=NullPool, echo=False)
         async with admin_engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
             await conn.execute(text("ALTER TABLE items ENABLE ROW LEVEL SECURITY;"))
@@ -42,7 +43,7 @@ async def test_engine():
                 pass
         await admin_engine.dispose()
     elif "sqlite" in TEST_DATABASE_URL:
-        engine = create_async_engine(TEST_DATABASE_URL, echo=False)
+        engine = create_async_engine(TEST_DATABASE_URL, poolclass=StaticPool, echo=False)
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
         yield engine
@@ -74,7 +75,7 @@ async def test_engine():
         finally:
             await setup_engine.dispose()
 
-    engine = create_async_engine(TEST_DATABASE_URL, echo=False)
+    engine = create_async_engine(TEST_DATABASE_URL, poolclass=NullPool, echo=False)
     yield engine
     await engine.dispose()
 

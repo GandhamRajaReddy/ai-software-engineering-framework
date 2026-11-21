@@ -2,13 +2,14 @@ import time
 import uuid
 import logging
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request, Response, status
+from fastapi import FastAPI, Request, Response, status, Depends
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.logging import setup_logging
-from app.core.database import engine, Base
+from app.core.database import engine, Base, get_db
 from app.api.v1.endpoints import router as items_router
 from app.api.v1.schemas import ProblemDetails
 
@@ -99,16 +100,10 @@ async def liveness_probe():
     return {"status": "ok"}
 
 @app.get("/readyz", tags=["observability"])
-async def readiness_probe():
+async def readiness_probe(db: AsyncSession = Depends(get_db)):
     """Readiness probe: verifies database connection is ready to accept traffic."""
-    if not engine:
-        return JSONResponse(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            content={"status": "unavailable", "database": "disconnected", "error": "Database engine not initialized"}
-        )
     try:
-        async with engine.connect() as conn:
-            await conn.execute(text("SELECT 1"))
+        await db.execute(text("SELECT 1"))
         return {"status": "ready", "database": "connected"}
     except Exception as exc:
         logger.error(f"Readiness check failed: {str(exc)}")
