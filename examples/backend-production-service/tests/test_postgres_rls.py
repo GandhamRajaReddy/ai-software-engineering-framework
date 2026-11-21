@@ -105,4 +105,5 @@ async def test_api_requests_with_postgresql_rls_context(client, setup_tenants, d
     await db_session.execute(text(f"SELECT set_config('app.current_tenant_id', 'tenant-b-222', false);"))
     leak_check = await db_session.execute(text(f"SELECT * FROM items WHERE id = '{item_id}';"))
     assert leak_check.fetchone() is None
+    await db_session.execute(text(f"SELECT set_config('app.current_tenant_id', '', false);"))
     await db_session.rollback()

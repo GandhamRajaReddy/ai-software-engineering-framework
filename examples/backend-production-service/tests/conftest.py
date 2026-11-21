@@ -83,12 +83,30 @@ async def db_session(test_engine):
     session_maker = async_sessionmaker(bind=test_engine, class_=AsyncSession, expire_on_commit=False)
     async with session_maker() as session:
         yield session
+        bind = session.bind
+        if bind and bind.dialect.name == "postgresql":
+            try:
+                await session.execute(text("SELECT set_config('app.current_tenant_id', '', false)"))
+            except Exception:
+                pass
         await session.rollback()
 
 @pytest_asyncio.fixture
-async def client(db_session):
+async def client(test_engine):
+    session_maker = async_sessionmaker(bind=test_engine, class_=AsyncSession, expire_on_commit=False)
+
     async def override_get_db():
-        yield db_session
+        async with session_maker() as session:
+            try:
+                yield session
+            finally:
+                bind = session.bind
+                if bind and bind.dialect.name == "postgresql":
+                    try:
+                        await session.execute(text("SELECT set_config('app.current_tenant_id', '', false)"))
+                    except Exception:
+                        pass
+                await session.close()
 
     app.dependency_overrides[get_db] = override_get_db
     transport = ASGITransport(app=app)
@@ -97,25 +115,25 @@ async def client(db_session):
     app.dependency_overrides.clear()
 
 @pytest_asyncio.fixture
-async def setup_tenants(db_session):
-    tenant_a = await db_session.get(Tenant, "tenant-a-111")
-    if not tenant_a:
-        tenant_a = Tenant(id="tenant-a-111", name="Acme Corp", slug="acme")
-        db_session.add(tenant_a)
-    tenant_b = await db_session.get(Tenant, "tenant-b-222")
-    if not tenant_b:
-        tenant_b = Tenant(id="tenant-b-222", name="Beta Corp", slug="beta")
-        db_session.add(tenant_b)
-    await db_session.commit()
-    await db_session.refresh(tenant_a)
-    await db_session.refresh(tenant_b)
+async def setup_tenants(test_engine):
+    session_maker = async_sessionmaker(bind=test_engine, class_=AsyncSession, expire_on_commit=False)
+    async with session_maker() as session:
+        tenant_a = await session.get(Tenant, "tenant-a-111")
+        if not tenant_a:
+            tenant_a = Tenant(id="tenant-a-111", name="Acme Corp", slug="acme")
+            session.add(tenant_a)
+        tenant_b = await session.get(Tenant, "tenant-b-222")
+        if not tenant_b:
+            tenant_b = Tenant(id="tenant-b-222", name="Beta Corp", slug="beta")
+            session.add(tenant_b)
+        await session.commit()
 
     token_a = create_access_token(user_id="user-a-1", email="alice@acme.com", tenant_id="tenant-a-111")
     token_b = create_access_token(user_id="user-b-2", email="bob@beta.com", tenant_id="tenant-b-222")
 
     return {
-        "tenant_a": tenant_a,
-        "tenant_b": tenant_b,
+        "tenant_a_id": "tenant-a-111",
+        "tenant_b_id": "tenant-b-222",
         "token_a": token_a,
         "token_b": token_b
     }

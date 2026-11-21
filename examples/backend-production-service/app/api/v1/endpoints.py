@@ -24,7 +24,6 @@ async def create_item(
     db.add(item)
     await db.flush()
     await db.commit()
-    await db.refresh(item)
     return item
 
 @router.get("", response_model=list[ItemResponse])
@@ -80,7 +79,6 @@ async def update_item(
     try:
         await db.flush()
         await db.commit()
-        await db.refresh(item)
     except StaleDataError:
         await db.rollback()
         raise HTTPException(
