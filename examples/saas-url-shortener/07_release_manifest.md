@@ -25,3 +25,20 @@
    docker run -d --name swiftlink-prev registry.company.com/swiftlink:v0.9.4
    ```
 3. **Point of Contact:** DevOps On-Call Team.
+
+
+## Cryptographic Release Signature
+
+> **Notice:** This release manifest is cryptographically sealed. Any alteration of source files, evidence IDs, or gate scores invalidates this signature.
+
+```asef-signature
+Algorithm: Ed25519
+PublicKey: MCowBQYDK2VwAyEA0jB6GeJotZm7zYBkmzm/ALrgzkNtmk98BTOHMVXzsEg=
+Signature: 59TSSZ0skrOC4oYnVKtrg+lkU3wZjR1z75+1OfsJDL3sQEjOUdoG+rUhKQnAUzGZ3LOBCMrCY0i9Wcu/26+DAQ==
+PayloadDigest: 39e6932f66162d904f41ccc97a15bc39f6afdf4e202394ecff38aef71ce27807
+ContentDigest: c10721b584db2396fb50942f727839115d4bee9e97c0c0b317f62fe04086207d
+GitCommit: HEAD
+SourceTreeHash: 07488ffd44651dd431ca240a5c6c74480fc836b64552f9210c1ac1570051ded6
+ReleaseVersion: 1.0.0
+EvidenceIDs: ev-prod-verified-001
+```

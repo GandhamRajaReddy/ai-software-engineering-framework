@@ -18,6 +18,20 @@ async def test_postgresql_row_level_security_enforcement(db_session):
     if dialect_name != "postgresql":
         pytest.skip(f"RLS engine test requires PostgreSQL (detected dialect: {dialect_name})")
 
+    # Verify that FORCE ROW LEVEL SECURITY is strictly enabled on the items table
+    rls_check = await db_session.execute(text("SELECT relrowsecurity, relforcerowsecurity FROM pg_class WHERE relname = 'items';"))
+    rls_row = rls_check.fetchone()
+    if rls_row:
+        assert rls_row[0] is True, "Table 'items' must have relrowsecurity enabled"
+        assert rls_row[1] is True, "Table 'items' must have relforcerowsecurity enabled (FORCE RLS)"
+
+    # Verify that non-superuser application role does not have bypassrls or superuser
+    user_check = await db_session.execute(text("SELECT CURRENT_USER, rolsuper, rolbypassrls FROM pg_roles WHERE rolname = CURRENT_USER;"))
+    user_row = user_check.fetchone()
+    if user_row and user_row[0] == "app_user":
+        assert user_row[1] is False, "Role 'app_user' must not have rolsuper"
+        assert user_row[2] is False, "Role 'app_user' must not have rolbypassrls"
+
     tenant_a_id = f"tenant-a-{generate_uuidv7()[:8]}"
     tenant_b_id = f"tenant-b-{generate_uuidv7()[:8]}"
 

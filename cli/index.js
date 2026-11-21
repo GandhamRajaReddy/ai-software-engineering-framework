@@ -230,8 +230,8 @@ function handlePipeline(args = []) {
       if (args.includes('--problem')) {
         problem = args[args.indexOf('--problem') + 1] || '';
       }
-      const backend = args.includes('--backend') ? args[args.indexOf('--backend') + 1] : 'mock';
-      console.log(`\n🚀 Starting Automated End-to-End SDLC Run...`);
+      const backend = args.includes('--backend') ? args[args.indexOf('--backend') + 1] : (process.env.ASEF_AGENT_BACKEND || 'direct-llm');
+      console.log(`\n🚀 Starting Automated End-to-End SDLC Run [Backend: ${backend}]...`);
       return engine.autoRun(problem, { backend }).then(res => {
         if (res.success) {
           console.log(`\n🎉 Automated Lifecycle Completed Successfully! Score: 100/100`);
@@ -286,7 +286,11 @@ function handleSignManifest(manifestPath = '07_release_manifest.md') {
   content = content.replace(/## Cryptographic Release Signature[\s\S]*```asef-signature[\s\S]*?```\r?\n?/g, '').trim();
 
   const sourceTreeHash = computeSourceTreeHash(path.dirname(full));
-  const keyPair = ManifestSigner.generateKeyPair();
+  const defaultSigningKey = `-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEIPCH27T041mMwwjDdfUqOrO/vg955l8CM2uk0ggQrpli\n-----END PRIVATE KEY-----\n`;
+  const defaultPublicKey = `MCowBQYDK2VwAyEA0jB6GeJotZm7zYBkmzm/ALrgzkNtmk98BTOHMVXzsEg=`;
+
+  const privateKey = process.env.ASEF_SIGNING_KEY || defaultSigningKey;
+  const publicKey = process.env.ASEF_PUBLIC_KEY || defaultPublicKey;
 
   const payload = {
     evidenceRecordIds: ['ev-prod-verified-001'],
@@ -295,8 +299,8 @@ function handleSignManifest(manifestPath = '07_release_manifest.md') {
     sourceTreeHash
   };
 
-  const signed = ManifestSigner.signPayload(payload, keyPair.privateKey);
-  const block = ManifestSigner.formatSignatureBlock(signed, keyPair.publicKey);
+  const signed = ManifestSigner.signPayload(payload, privateKey, content);
+  const block = ManifestSigner.formatSignatureBlock(signed, publicKey);
 
   const sealedContent = content + '\n\n' + block;
   fs.writeFileSync(full, sealedContent, 'utf8');

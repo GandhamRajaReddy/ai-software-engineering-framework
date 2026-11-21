@@ -68,7 +68,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup Python
-        uses: actions/setup-python@0b93645e9fea7318ec82b359559c99e981bc53c1 # v5.3.0
+        uses: actions/setup-python@v5
         with:
           python-version: '3.12'
           cache: 'pip'
@@ -79,15 +79,7 @@ jobs:
           pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run Pytest Suite with Tenant Boundary Assertions
-        working-directory: examples/backend-production-service
-        env:
-          DATABASE_URL: postgresql+asyncpg://testuser:testpassword@localhost:5432/testdb
-          ENVIRONMENT: test
-        run: |
-          pytest tests/ -v
-
-      - name: Validate Alembic Schema Upgrades & Downgrades
+      - name: Validate Alembic Schema Upgrades & Downgrades (Admin Role)
         working-directory: examples/backend-production-service
         env:
           DATABASE_URL: postgresql+asyncpg://testuser:testpassword@localhost:5432/testdb
@@ -95,6 +87,21 @@ jobs:
           alembic upgrade head
           alembic downgrade -1
           alembic upgrade head
+
+      - name: Configure Dedicated Non-Superuser Role for RLS
+        working-directory: examples/backend-production-service
+        env:
+          DATABASE_URL: postgresql+asyncpg://testuser:testpassword@localhost:5432/testdb
+        run: |
+          python tests/setup_app_user.py
+
+      - name: Run Pytest Suite with Non-Superuser Tenant Boundary Assertions
+        working-directory: examples/backend-production-service
+        env:
+          DATABASE_URL: postgresql+asyncpg://app_user:app_password@localhost:5432/testdb
+          ENVIRONMENT: test
+        run: |
+          pytest tests/ -v
 
   docker-build-smoke:
     name: Production Docker Multi-Stage Build & Smoke
@@ -111,9 +118,14 @@ jobs:
 
       - name: Container Smoke Test (/readyz)
         run: |
-          docker run -d --name test-api -p 8000:8000 -e ENVIRONMENT=development -e DATABASE_URL="sqlite+aiosqlite:////tmp/test.db" asef/backend-reference:test
-          sleep 5
+          docker run -d --name test-api -p 8000:8000 \
+            -e ENVIRONMENT=development \
+            -e DATABASE_URL="sqlite+aiosqlite:////tmp/test.db" \
+            -e JWT_SECRET="ci-development-secret-key-32-chars-minimum!" \
+            asef/backend-reference:test
+          sleep 6
           docker logs test-api
+          curl -f http://localhost:8000/healthz || exit 1
           curl -f http://localhost:8000/readyz || exit 1
           docker stop test-api
 

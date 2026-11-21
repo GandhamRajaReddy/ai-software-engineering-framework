@@ -125,6 +125,16 @@ test('Cryptographic Manifest Signer: Signs, verifies, and detects tampering with
   assert.strictEqual(signed.algorithm, 'Ed25519');
   assert.ok(signed.signature.length > 30);
 
+  // 0. Verify that un-registered key fails closed as untrusted
+  const markdownBlockBeforeRegister = ManifestSigner.formatSignatureBlock(signed, keyPair.publicKey);
+  const unregManifest = `# Release Manifest\n\nStatus: APPROVED\n` + markdownBlockBeforeRegister;
+  const unregResult = ManifestSigner.verifyManifest(unregManifest, sourceTreeHash);
+  assert.strictEqual(unregResult.valid, false);
+  assert.match(unregResult.reason, /Untrusted signer identity/);
+
+  // Register key explicitly with trusted release authority keyring
+  ManifestSigner.registerTrustedKey(keyPair.publicKey);
+
   const markdownBlock = ManifestSigner.formatSignatureBlock(signed, keyPair.publicKey);
   const fullManifest = `# Release Manifest\n\nStatus: APPROVED\n` + markdownBlock;
 
@@ -317,7 +327,9 @@ test('Cryptographic Signer: Trusted key verification & content tampering detecti
 
   // 3. Reject modified body (content tampering)
   const tamperedBodyManifest = fullSignedManifest.replace('Status: APPROVED', 'Status: REJECTED');
-  const tamperedContentResult = ManifestSigner.verifyManifest(tamperedBodyManifest, treeHash);
+  const tamperedContentResult = ManifestSigner.verifyManifest(tamperedBodyManifest, treeHash, {
+    trustedKeys: [rootKeyPair.publicKey]
+  });
   assert.strictEqual(tamperedContentResult.valid, false);
   assert.match(tamperedContentResult.reason, /content tampering detected/i);
 });

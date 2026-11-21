@@ -107,30 +107,45 @@ def decode_and_verify_token(token_str: str) -> dict:
     except Exception:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload")
         
-    # 4. Verify temporal constraints with 10s clock skew allowance
+    # 4. Verify temporal constraints strictly with 10s clock skew allowance
     now = int(time.time())
     leeway = 10
-    if payload.get("exp", 0) < (now - leeway):
+
+    # Require and validate numeric temporal claims
+    for claim in ("exp", "nbf", "iat"):
+        if claim not in payload or not isinstance(payload[claim], (int, float)):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=f"Authentication token missing or invalid temporal claim '{claim}'"
+            )
+
+    if payload["exp"] < (now - leeway):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Authentication token has expired"
         )
-    if payload.get("nbf", 0) > (now + leeway):
+    if payload["nbf"] > (now + leeway):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Token is not yet active"
         )
-    if payload.get("iat", 0) > (now + leeway):
+    if payload["iat"] > (now + leeway):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Token issued in future date"
         )
         
-    # 5. Verify issuer and audience constraints
-    if "iss" in payload and payload["iss"] != "asef-auth-service":
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token issuer")
-    if "aud" in payload and payload["aud"] != "asef-api-service":
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token audience")
+    # 5. Require and strictly validate issuer and audience constraints
+    if payload.get("iss") != "asef-auth-service":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or missing token issuer ('iss')"
+        )
+    if payload.get("aud") != "asef-api-service":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or missing token audience ('aud')"
+        )
         
     return payload
 
@@ -185,8 +200,11 @@ async def get_current_user(
         except HTTPException:
             raise
         except Exception:
-            # Fallback if DB is not attached or during unit tests with partial db
-            pass
+            # Audit requirement: Fail closed on database errors to prevent authorization bypass
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Tenant verification failed due to internal database error."
+            )
         
     return AuthenticatedUser(
         user_id=payload.get("sub"),

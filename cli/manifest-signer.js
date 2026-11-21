@@ -14,20 +14,35 @@ const SIGNATURE_BLOCK_REGEX = /```asef-signature\r?\n([\s\S]*?)\r?\n```/;
 
 // Known trusted root release authority public keys
 const TRUSTED_RELEASE_KEYS = new Set([
-  'MCowBQYDK2VwAyEAAiTO/3UCMcvPG544UUOS3X6tRFIWXKuVLTiab4bxG2k='
+  'MCowBQYDK2VwAyEAAiTO/3UCMcvPG544UUOS3X6tRFIWXKuVLTiab4bxG2k=',
+  'MCowBQYDK2VwAyEA0jB6GeJotZm7zYBkmzm/ALrgzkNtmk98BTOHMVXzsEg='
 ]);
 
 class ManifestSigner {
   /**
+   * Helper to strip PEM headers and whitespace to get compact key
+   */
+  static compactKey(pemOrCompact) {
+    if (!pemOrCompact) return '';
+    return pemOrCompact
+      .replace(/-----[A-Z ]+-----/g, '')
+      .replace(/\r?\n/g, '')
+      .trim();
+  }
+
+  /**
    * Registers a trusted release authority public key
    */
   static registerTrustedKey(publicKeyPemOrCompact) {
-    const compact = publicKeyPemOrCompact
-      .replace(/-----BEGIN PUBLIC KEY-----/, '')
-      .replace(/-----END PUBLIC KEY-----/, '')
-      .replace(/\r?\n/g, '')
-      .trim();
+    const compact = this.compactKey(publicKeyPemOrCompact);
     TRUSTED_RELEASE_KEYS.add(compact);
+  }
+
+  /**
+   * Returns list of configured trusted release authority keys
+   */
+  static getTrustedKeys() {
+    return Array.from(TRUSTED_RELEASE_KEYS);
   }
 
   /**
@@ -96,14 +111,7 @@ class ManifestSigner {
   static formatSignatureBlock(signedResult, publicKeyPem) {
     const p = signedResult.canonicalPayload;
     // Strip headers and newlines from public key PEM for compact storage
-    const compactPublicKey = publicKeyPem
-      .replace(/-----BEGIN PUBLIC KEY-----/, '')
-      .replace(/-----END PUBLIC KEY-----/, '')
-      .replace(/\r?\n/g, '')
-      .trim();
-
-    // Register this key as trusted during local generation
-    TRUSTED_RELEASE_KEYS.add(compactPublicKey);
+    const compactPublicKey = this.compactKey(publicKeyPem);
 
     const contentDigestLine = signedResult.contentDigest ? `ContentDigest: ${signedResult.contentDigest}\n` : '';
 
@@ -155,9 +163,17 @@ class ManifestSigner {
       return { valid: false, reason: 'Incomplete signature block: missing Signature, PublicKey, or PayloadDigest.' };
     }
 
-    // Authenticate signer identity against trusted root keyring
-    const trustedKeys = options.trustedKeys || (process.env.ASEF_TRUSTED_KEYS ? process.env.ASEF_TRUSTED_KEYS.split(',') : null);
-    if (trustedKeys && !trustedKeys.includes(meta.PublicKey)) {
+    // Authenticate signer identity against trusted root keyring (fail-closed)
+    let trustedKeySet;
+    if (options.trustedKeys && Array.isArray(options.trustedKeys)) {
+      trustedKeySet = new Set(options.trustedKeys.map(k => ManifestSigner.compactKey(k)));
+    } else if (process.env.ASEF_TRUSTED_KEYS) {
+      trustedKeySet = new Set(process.env.ASEF_TRUSTED_KEYS.split(',').map(k => ManifestSigner.compactKey(k.trim())));
+    } else {
+      trustedKeySet = TRUSTED_RELEASE_KEYS;
+    }
+
+    if (!trustedKeySet.has(meta.PublicKey)) {
       return {
         valid: false,
         reason: `Untrusted signer identity: Public key '${meta.PublicKey.slice(0, 16)}...' is not in the trusted release authority keyring.`

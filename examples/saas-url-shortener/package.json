@@ -1,0 +1,20 @@
+{
+  "name": "swiftlink-enterprise",
+  "version": "1.0.0",
+  "description": "SwiftLink Enterprise - High-Performance, Privacy-First URL Shortener & Analytics",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test tests/shortener.test.js"
+  },
+  "keywords": [
+    "url-shortener",
+    "base62",
+    "analytics",
+    "privacy-first",
+    "fast-redirect"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

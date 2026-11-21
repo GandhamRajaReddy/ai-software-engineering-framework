@@ -10,6 +10,10 @@ class UnifiedLLMClient {
     this.openrouterKey = config.openrouterKey || process.env.OPENROUTER_API_KEY || '';
   }
 
+  async complete(messages, options = {}) {
+    return this.chatCompletion(messages, options);
+  }
+
   async chatCompletion(messages, options = {}) {
     const errors = [];
 

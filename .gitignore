@@ -36,4 +36,5 @@ Thumbs.db
 .asef/
 .asef-cache/
 .asef-temp/
+.data/
 test-results/

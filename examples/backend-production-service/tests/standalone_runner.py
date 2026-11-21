@@ -1,5 +1,6 @@
 import os
 import sys
+import time
 
 # Ensure backend root is on sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -35,6 +36,42 @@ def run_all_checks():
         assert False, "Tampered token should have failed"
     except Exception as e:
         print(f"  Tampered token correctly rejected with {type(e).__name__}: PASS")
+
+    # Missing iss / aud / temporal claims rejected
+    import hmac, hashlib, json, base64
+    from app.core.config import settings
+
+    def make_custom_token(claims_dict):
+        h = {"alg": "HS256", "typ": "JWT"}
+        hb64 = base64.urlsafe_b64encode(json.dumps(h).encode()).decode().rstrip("=")
+        pb64 = base64.urlsafe_b64encode(json.dumps(claims_dict).encode()).decode().rstrip("=")
+        sig = hmac.new(settings.JWT_SECRET.encode(), f"{hb64}.{pb64}".encode(), hashlib.sha256).digest()
+        sb64 = base64.urlsafe_b64encode(sig).decode().rstrip("=")
+        return f"{hb64}.{pb64}.{sb64}"
+
+    # Missing iss
+    bad_iss = make_custom_token({"aud": "asef-api-service", "sub": "u1", "tid": "t1", "iat": int(time.time()), "nbf": int(time.time()), "exp": int(time.time()) + 3600})
+    try:
+        decode_and_verify_token(bad_iss)
+        assert False, "Missing iss should have been rejected"
+    except Exception:
+        print("  Missing 'iss' claim rejected: PASS")
+
+    # Missing aud
+    bad_aud = make_custom_token({"iss": "asef-auth-service", "sub": "u1", "tid": "t1", "iat": int(time.time()), "nbf": int(time.time()), "exp": int(time.time()) + 3600})
+    try:
+        decode_and_verify_token(bad_aud)
+        assert False, "Missing aud should have been rejected"
+    except Exception:
+        print("  Missing 'aud' claim rejected: PASS")
+
+    # Missing exp
+    bad_exp = make_custom_token({"iss": "asef-auth-service", "aud": "asef-api-service", "sub": "u1", "tid": "t1", "iat": int(time.time()), "nbf": int(time.time())})
+    try:
+        decode_and_verify_token(bad_exp)
+        assert False, "Missing exp should have been rejected"
+    except Exception:
+        print("  Missing 'exp' claim rejected: PASS")
 
     print("\n--- 3. Testing Tenant Spoofing Defense Logic ---")
     # Simulate get_current_user logic

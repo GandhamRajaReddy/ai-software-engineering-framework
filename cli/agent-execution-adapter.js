@@ -94,7 +94,7 @@ class AgentExecutionAdapter {
     // 5. Verification & Feedback Loop (Self-Healing TDD)
     let verificationResult = { passed: true, command: 'none', attempts: 1 };
     if (stage.index >= 4) { // Stage 04 (Implementation) and Stage 05 (Verification)
-      const testCommand = context.testCommand || 'npm test';
+      const testCommand = this.detectTestCommand(context);
       verificationResult = await this.runFeedbackLoop(testCommand, stage, collectedFiles, agentResponse);
 
       // Anti-Hallucination Law 2: Verification invariant audit (strictly blocking)
@@ -142,6 +142,73 @@ class AgentExecutionAdapter {
       collectedFiles,
       agentResponse
     };
+  }
+
+  /**
+   * Detects stack-appropriate verification command based on context and repository markers
+   */
+  detectTestCommand(context = {}) {
+    if (context.testCommand && context.testCommand !== 'none') {
+      return context.testCommand;
+    }
+
+    const selectedStack = (context.selectedStack || '').toLowerCase();
+    
+    // 1. Python detection
+    if (
+      selectedStack.includes('python') ||
+      selectedStack.includes('fastapi') ||
+      selectedStack.includes('django') ||
+      fs.existsSync(path.join(this.projectDir, 'pytest.ini')) ||
+      fs.existsSync(path.join(this.projectDir, 'pyproject.toml')) ||
+      fs.existsSync(path.join(this.projectDir, 'requirements.txt')) ||
+      fs.existsSync(path.join(this.projectDir, 'Pipfile'))
+    ) {
+      if (
+        selectedStack.includes('fastapi') ||
+        selectedStack.includes('django') ||
+        fs.existsSync(path.join(this.projectDir, 'pytest.ini')) ||
+        fs.existsSync(path.join(this.projectDir, 'tests'))
+      ) {
+        return 'pytest';
+      }
+      return 'python -m unittest';
+    }
+
+    // 2. Go detection
+    if (
+      selectedStack.includes('go') ||
+      selectedStack.includes('golang') ||
+      fs.existsSync(path.join(this.projectDir, 'go.mod'))
+    ) {
+      return 'go test ./...';
+    }
+
+    // 3. Java detection
+    if (
+      selectedStack.includes('java') ||
+      selectedStack.includes('spring') ||
+      fs.existsSync(path.join(this.projectDir, 'pom.xml'))
+    ) {
+      return 'mvn test';
+    }
+    if (fs.existsSync(path.join(this.projectDir, 'build.gradle')) || fs.existsSync(path.join(this.projectDir, 'build.gradle.kts'))) {
+      return process.platform === 'win32' ? 'gradlew.bat test' : './gradlew test';
+    }
+
+    // 4. Node / TypeScript detection
+    if (fs.existsSync(path.join(this.projectDir, 'package.json'))) {
+      try {
+        const pkg = JSON.parse(fs.readFileSync(path.join(this.projectDir, 'package.json'), 'utf8'));
+        if (pkg.scripts && pkg.scripts.test) {
+          return 'npm test';
+        }
+      } catch (e) { /* ignore parse error */ }
+      return 'npm test';
+    }
+
+    // Default fallback
+    return 'npm test';
   }
 
   /**

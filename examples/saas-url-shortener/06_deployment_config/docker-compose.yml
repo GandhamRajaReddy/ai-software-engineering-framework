@@ -1,8 +1,8 @@
 services:
   app:
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: 06_deployment_config/Dockerfile
     restart: unless-stopped
     ports:
       - "3000:3000"

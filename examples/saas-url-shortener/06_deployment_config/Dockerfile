@@ -1,15 +1,14 @@
-# Stage 1: Dependency resolution and compilation
+# Stage 1: Build & test
 FROM node:20-alpine AS builder
 WORKDIR /app
-RUN apk add --no-cache libc6-compat
-COPY package.json package-lock.json ./
-RUN npm ci
+COPY package.json ./
+COPY src/ ./src/
+COPY public/ ./public/
+COPY tests/ ./tests/
+COPY server.js ./
+RUN node --test tests/shortener.test.js
 
-COPY . .
-ENV NODE_ENV=production
-RUN npm run build
-
-# Stage 2: Production runtime image
+# Stage 2: Production hardened runtime image
 FROM node:20-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
@@ -18,9 +17,10 @@ ENV PORT=3000
 # Security: Run as unprivileged node user
 USER node
 
+COPY --from=builder --chown=node:node /app/package.json ./package.json
+COPY --from=builder --chown=node:node /app/src ./src
 COPY --from=builder --chown=node:node /app/public ./public
-COPY --from=builder --chown=node:node /app/.next/standalone ./
-COPY --from=builder --chown=node:node /app/.next/static ./.next/static
+COPY --from=builder --chown=node:node /app/server.js ./server.js
 
 EXPOSE 3000
 

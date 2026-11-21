@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SwiftLink Enterprise | Privacy-First URL Infrastructure</title>
+  <style>
+    :root {
+      --bg: #090a0f;
+      --card-bg: #11131a;
+      --border: #222634;
+      --primary: #3b82f6;
+      --primary-hover: #2563eb;
+      --text: #f3f4f6;
+      --text-muted: #9ca3af;
+      --accent: #10b981;
+      --danger: #ef4444;
+      --mono-font: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      --sans-font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      font-family: var(--sans-font);
+      line-height: 1.5;
+      padding: 2rem 1rem;
+    }
+
+    .container {
+      max-width: 900px;
+      margin: 0 auto;
+    }
+
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 3rem;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 1rem;
+    }
+
+    .logo {
+      font-size: 1.25rem;
+      font-weight: 700;
+      letter-spacing: -0.025em;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .logo span { color: var(--primary); }
+
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.8rem;
+      font-family: var(--mono-font);
+      background: rgba(16, 185, 129, 0.1);
+      color: var(--accent);
+      border: 1px solid rgba(16, 185, 129, 0.2);
+      padding: 0.35rem 0.75rem;
+      border-radius: 9999px;
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--accent);
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+
+    .hero {
+      text-align: center;
+      margin-bottom: 2.5rem;
+    }
+
+    .hero h1 {
+      font-size: 2.5rem;
+      font-weight: 800;
+      letter-spacing: -0.04em;
+      margin-bottom: 0.5rem;
+    }
+
+    .hero p {
+      color: var(--text-muted);
+      font-size: 1.1rem;
+    }
+
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.75rem;
+      margin-bottom: 2rem;
+    }
+
+    .form-group {
+      margin-bottom: 1rem;
+    }
+
+    label {
+      display: block;
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      margin-bottom: 0.5rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    input[type="text"], input[type="url"] {
+      width: 100%;
+      background: #0d0f15;
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 0.75rem 1rem;
+      border-radius: 8px;
+      font-size: 1rem;
+      outline: none;
+      transition: border-color 0.15s ease;
+    }
+
+    input:focus {
+      border-color: var(--primary);
+    }
+
+    .form-row {
+      display: grid;
+      grid-template-columns: 2fr 1fr;
+      gap: 1rem;
+    }
+
+    button {
+      background: var(--primary);
+      color: #fff;
+      border: none;
+      padding: 0.85rem 1.5rem;
+      font-size: 1rem;
+      font-weight: 600;
+      border-radius: 8px;
+      cursor: pointer;
+      width: 100%;
+      transition: background 0.15s ease;
+    }
+
+    button:hover { background: var(--primary-hover); }
+
+    .result-card {
+      display: none;
+      margin-top: 1.5rem;
+      padding: 1.25rem;
+      background: #0d121f;
+      border: 1px solid rgba(59, 130, 246, 0.3);
+      border-radius: 8px;
+    }
+
+    .result-content {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 1rem;
+      font-family: var(--mono-font);
+      word-break: break-all;
+    }
+
+    .short-link {
+      color: var(--primary);
+      text-decoration: none;
+      font-weight: 600;
+    }
+
+    .copy-btn {
+      width: auto;
+      padding: 0.5rem 1rem;
+      font-size: 0.85rem;
+      background: #1e293b;
+    }
+
+    .table-card {
+      margin-top: 2rem;
+    }
+
+    .table-card h2 {
+      font-size: 1.25rem;
+      margin-bottom: 1rem;
+      letter-spacing: -0.02em;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.9rem;
+    }
+
+    th, td {
+      padding: 0.75rem 1rem;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+    }
+
+    th {
+      color: var(--text-muted);
+      font-weight: 600;
+      text-transform: uppercase;
+      font-size: 0.75rem;
+      letter-spacing: 0.05em;
+    }
+
+    .error-msg {
+      color: var(--danger);
+      font-size: 0.9rem;
+      margin-top: 0.5rem;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="logo">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
+          <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
+        </svg>
+        SwiftLink <span>Enterprise</span>
+      </div>
+      <div class="status-badge">
+        <span class="status-dot"></span>
+        API Online (p99 &lt; 50ms)
+      </div>
+    </header>
+
+    <div class="hero">
+      <h1>Low-Latency URL Infrastructure</h1>
+      <p>Base62 high-entropy routing with cryptographically hashed GDPR click telemetry.</p>
+    </div>
+
+    <div class="card">
+      <form id="shortenForm">
+        <div class="form-row">
+          <div class="form-group">
+            <label for="urlInput">Destination URL</label>
+            <input type="url" id="urlInput" placeholder="https://example.com/long-product-campaign" required>
+          </div>
+          <div class="form-group">
+            <label for="slugInput">Custom Vanity Slug (Optional)</label>
+            <input type="text" id="slugInput" placeholder="launch-2026">
+          </div>
+        </div>
+        <button type="submit" id="submitBtn">Generate Short Link</button>
+        <div class="error-msg" id="errorMsg"></div>
+      </form>
+
+      <div class="result-card" id="resultCard">
+        <div class="result-content">
+          <div>
+            <span style="color: var(--text-muted); font-size: 0.8rem; display: block;">SHORTENED URL</span>
+            <a href="#" target="_blank" class="short-link" id="shortLinkDisplay"></a>
+          </div>
+          <button type="button" class="copy-btn" id="copyBtn">Copy</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card table-card">
+      <h2>Active Links & Click Telemetry</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Slug</th>
+            <th>Destination</th>
+            <th>Clicks</th>
+            <th>Created</th>
+          </tr>
+        </thead>
+        <tbody id="linksTableBody">
+          <tr>
+            <td colspan="4" style="text-align: center; color: var(--text-muted);">No links created yet.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <script>
+    const form = document.getElementById('shortenForm');
+    const urlInput = document.getElementById('urlInput');
+    const slugInput = document.getElementById('slugInput');
+    const resultCard = document.getElementById('resultCard');
+    const shortLinkDisplay = document.getElementById('shortLinkDisplay');
+    const copyBtn = document.getElementById('copyBtn');
+    const errorMsg = document.getElementById('errorMsg');
+    const tableBody = document.getElementById('linksTableBody');
+
+    async function loadLinks() {
+      try {
+        const res = await fetch('/api/links');
+        if (!res.ok) return;
+        const links = await res.json();
+        if (links.length === 0) return;
+
+        tableBody.innerHTML = links.map(l => `
+          <tr>
+            <td><a href="/s/${l.slug}" target="_blank" style="color: var(--primary); font-family: var(--mono-font);">${l.slug}</a></td>
+            <td style="max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${l.destinationUrl}</td>
+            <td style="font-family: var(--mono-font); font-weight: 600;">${l.clicksCount}</td>
+            <td style="color: var(--text-muted); font-size: 0.8rem;">${new Date(l.createdAt).toLocaleTimeString()}</td>
+          </tr>
+        `).join('');
+      } catch (e) {
+        // Network or offline
+      }
+    }
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      errorMsg.style.display = 'none';
+
+      const url = urlInput.value.trim();
+      const customSlug = slugInput.value.trim() || undefined;
+
+      try {
+        const res = await fetch('/api/links', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url, customSlug })
+        });
+
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data.error || 'Failed to shorten URL');
+        }
+
+        const fullShortUrl = `${window.location.origin}/s/${data.slug}`;
+        shortLinkDisplay.href = fullShortUrl;
+        shortLinkDisplay.textContent = fullShortUrl;
+        resultCard.style.display = 'block';
+
+        urlInput.value = '';
+        slugInput.value = '';
+        loadLinks();
+      } catch (err) {
+        errorMsg.textContent = err.message;
+        errorMsg.style.display = 'block';
+      }
+    });
+
+    copyBtn.addEventListener('click', () => {
+      navigator.clipboard.writeText(shortLinkDisplay.textContent);
+      copyBtn.textContent = 'Copied!';
+      setTimeout(() => { copyBtn.textContent = 'Copy'; }, 2000);
+    });
+
+    loadLinks();
+  </script>
+</body>
+</html>

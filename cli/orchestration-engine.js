@@ -558,17 +558,28 @@ class OrchestrationEngine {
     const targetStageIndex = stageIndex !== null ? stageIndex : state.currentStageIndex;
     const stage = STAGES[targetStageIndex];
 
-    const dag = new TaskDagScheduler();
+    const dag = new TaskDagScheduler({
+      concurrencyLimit: options.concurrencyLimit || 2,
+      maxRetries: options.maxRetries || 3
+    });
     
     // Register tasks
     for (const t of taskDefinitions) {
+      const assigned = t.assignedAgent || t.assigned_agent || stage.agent;
+      if (stage.index === 5 && (assigned === 'Senior Builder' || options.authorAgent === assigned)) {
+        throw new Error(`Dual control violation: Author cannot act as verifier in Stage 05.`);
+      }
+
       dag.addTask({
         id: t.id || t.task_id,
+        name: t.name || t.title || t.description || t.id,
         description: t.description || t.title,
         dependsOn: t.dependsOn || t.dependencies || [],
         dependencies: t.dependencies || t.dependsOn || [],
         targetFiles: t.targetFiles || t.target_files || [],
-        assignedAgent: t.assignedAgent || t.assigned_agent || stage.agent,
+        assignedAgent: assigned,
+        requiresApproval: t.requiresApproval,
+        approved: t.approved || options.approved,
         execute: t.execute
       });
     }
@@ -582,51 +593,32 @@ class OrchestrationEngine {
     });
 
     for (const batch of batches) {
-      // Execute all independent tasks in the batch concurrently
-      const batchPromises = batch.map(async (task) => {
+      // Execute through bounded worker pool with retry and state tracking
+      const batchResults = await dag.runBatchWithWorkerPool(batch, async (task) => {
         const assigned = task.assignedAgent || task.agent;
         if (stage.index === 5 && (assigned === 'Senior Builder' || options.authorAgent === assigned)) {
           throw new Error(`Dual control violation: Author cannot act as verifier in Stage 05.`);
         }
 
-        let result;
-        let success = false;
-        let error = null;
-
-        try {
-          if (typeof task.execute === 'function') {
-            result = await task.execute();
-            success = result !== false && (!result || result.success !== false);
-          } else {
-            result = await adapter.executeStage(targetStageIndex, {
-              ...options,
-              assignedAgent: assigned,
-              agentOverride: assigned,
-              targetFiles: task.targetFiles,
-              taskDescription: task.description
-            });
-            success = Boolean(result && result.success !== false);
-          }
-        } catch (err) {
-          success = false;
-          error = err.message;
-          result = { error: err.message };
-          if (options.failFast) {
-            throw err;
-          }
+        if (typeof task.execute === 'function') {
+          return await task.execute();
+        } else {
+          return await adapter.executeStage(targetStageIndex, {
+            ...options,
+            assignedAgent: assigned,
+            agentOverride: assigned,
+            targetFiles: task.targetFiles,
+            taskDescription: task.description
+          });
         }
+      }, options.concurrencyLimit || 2);
 
-        return {
-          taskId: task.id,
-          assignedAgent: assigned,
-          success,
-          error,
-          result
-        };
-      });
-
-      const batchResults = await Promise.all(batchPromises);
       taskResults.push(...batchResults);
+
+      // Checkpoint state after each batch
+      const checkpointDir = path.join(this.stateDir, 'checkpoints');
+      const checkpointPath = path.join(checkpointDir, `stage-${stage.index}-checkpoint.json`);
+      dag.saveCheckpoint(checkpointPath);
 
       const hasFailures = batchResults.some(r => !r.success);
       if (hasFailures && options.failFast) {
@@ -639,7 +631,8 @@ class OrchestrationEngine {
       stageId: stage.id,
       totalTasks: taskDefinitions.length,
       executedBatches: batches.length,
-      results: taskResults
+      results: taskResults,
+      dag
     };
   }
 

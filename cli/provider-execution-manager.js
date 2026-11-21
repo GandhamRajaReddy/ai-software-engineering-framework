@@ -13,7 +13,9 @@ const { ProviderManager } = require('../resources/provider_management');
 class ProviderExecutionManager {
   constructor(options = {}) {
     this.requestedBackend = options.backend || process.env.ASEF_AGENT_BACKEND || 'direct-llm';
-    this.allowMockFallback = options.allowMockFallback !== undefined ? options.allowMockFallback : true;
+    this.allowMockFallback = options.allowMockFallback !== undefined
+      ? options.allowMockFallback
+      : (process.env.NODE_ENV === 'test' || options.isTest || process.env.ASEF_ALLOW_MOCK === 'true');
     this.projectDir = path.resolve(options.projectDir || process.cwd());
     this.providerManager = options.providerManager || new ProviderManager();
   }
@@ -136,14 +138,14 @@ class ProviderExecutionManager {
    * Attempts a specific execution backend
    */
   async tryBackend(backend, prompt, stage, options = {}) {
-    const timeoutMs = options.timeoutMs || 1000;
+    const timeoutMs = options.timeoutMs || 120000;
     switch (backend) {
       case 'claude-code':
         return this.invokeClaudeCLI(prompt, timeoutMs);
       case 'codex':
         return this.invokeCodexCLI(prompt, timeoutMs);
       case 'direct-llm':
-        return this.invokeDirectLLM(prompt, stage);
+        return this.invokeDirectLLM(prompt, stage, options);
       case 'mock':
       default:
         return { success: true, content: this.generateMockContent(stage) };
@@ -153,7 +155,7 @@ class ProviderExecutionManager {
   /**
    * Invokes Claude Code CLI shell-free
    */
-  async invokeClaudeCLI(prompt, timeoutMs = 3000) {
+  async invokeClaudeCLI(prompt, timeoutMs = 120000) {
     return new Promise((resolve) => {
       let stdout = '';
       let stderr = '';
@@ -206,7 +208,7 @@ class ProviderExecutionManager {
   /**
    * Invokes Codex CLI shell-free
    */
-  async invokeCodexCLI(prompt, timeoutMs = 3000) {
+  async invokeCodexCLI(prompt, timeoutMs = 120000) {
     return new Promise((resolve) => {
       let stdout = '';
       let stderr = '';
@@ -259,7 +261,7 @@ class ProviderExecutionManager {
   /**
    * Direct LLM invocation with failover
    */
-  async invokeDirectLLM(prompt, stage) {
+  async invokeDirectLLM(prompt, stage, options = {}) {
     const apiKey = process.env.OPENROUTER_API_KEY ||
                    process.env.GEMINI_API_KEY ||
                    process.env.GROQ_API_KEY ||
@@ -276,11 +278,13 @@ class ProviderExecutionManager {
       if (fs.existsSync(clientPath)) {
         const { UnifiedLLMClient } = require(clientPath);
         const client = new UnifiedLLMClient();
-        const response = await client.complete([
+        const messages = [
           { role: 'system', content: `You are specialist persona "${stage.agent}". Output clean file blocks.` },
           { role: 'user', content: prompt }
-        ]);
-        return { success: true, content: response.content };
+        ];
+        const response = await (client.chatCompletion ? client.chatCompletion(messages, options) : client.complete(messages, options));
+        const content = response.content || (response.choices && response.choices[0] && response.choices[0].message ? response.choices[0].message.content : '');
+        return { success: true, content };
       }
     } catch (e) {
       return { success: false, error: `Direct LLM client error: ${e.message}` };

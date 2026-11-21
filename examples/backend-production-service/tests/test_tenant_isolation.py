@@ -70,3 +70,9 @@ async def test_tenant_isolation_boundary(client, setup_tenants):
     verify_res = await client.get(f"/api/v1/items/{item_id}", headers=headers_a)
     assert verify_res.status_code == 200
     assert verify_res.json()["title"] == "Confidential Blueprint"
+
+    # 10. Non-existent tenant token rejected with 403 Forbidden
+    ghost_token = create_access_token(user_id="user-c", email="carol@ghost.com", tenant_id="tenant-ghost-999")
+    ghost_res = await client.get("/api/v1/items", headers={"Authorization": f"Bearer {ghost_token}"})
+    assert ghost_res.status_code == 403
+    assert "does not exist" in ghost_res.json()["detail"]
